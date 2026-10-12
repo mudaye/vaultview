@@ -1,0 +1,61 @@
+[package]
+name = "vaultview"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Cross-platform media viewer with integrated password-based file encryption"
+license = "MIT"
+readme = "README.md"
+keywords = ["media-viewer", "encryption", "egui", "privacy"]
+categories = ["multimedia", "cryptography"]
+publish = false
+
+[lib]
+name = "vaultview"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vaultview"
+path = "src/main.rs"
+
+[features]
+default = ["video"]
+video = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video"]
+avif = ["image/avif-native"]
+
+[dependencies]
+eframe = "0.31"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
+infer = "0.16"
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+zeroize = { version = "1.8", features = ["derive"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+dirs = "6"
+gstreamer = { version = "0.23", optional = true }
+gstreamer-app = { version = "0.23", optional = true }
+gstreamer-video = { version = "0.23", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
