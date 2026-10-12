@@ -76,17 +76,26 @@ impl Favorites {
 
     /// Serialises the list to JSON.
     pub fn to_json(&self) -> Result<String> {
-        let stored = Stored { version: FAVORITES_FORMAT_VERSION, folders: self.folders.clone() };
+        let stored = Stored {
+            version: FAVORITES_FORMAT_VERSION,
+            folders: self.folders.clone(),
+        };
         serde_json::to_string_pretty(&stored).map_err(|e| Error::Serialization(e.to_string()))
     }
 
     /// Parses a list from JSON, rejecting unknown versions.
     pub fn from_json(json: &str) -> Result<Self> {
-        let stored: Stored = serde_json::from_str(json).map_err(|e| Error::Serialization(e.to_string()))?;
+        let stored: Stored =
+            serde_json::from_str(json).map_err(|e| Error::Serialization(e.to_string()))?;
         if stored.version != FAVORITES_FORMAT_VERSION {
-            return Err(Error::Serialization(format!("unsupported favorites version {}", stored.version)));
+            return Err(Error::Serialization(format!(
+                "unsupported favorites version {}",
+                stored.version
+            )));
         }
-        Ok(Self { folders: stored.folders })
+        Ok(Self {
+            folders: stored.folders,
+        })
     }
 
     /// Loads the list from `path`. A missing file yields an empty list; a

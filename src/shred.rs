@@ -50,7 +50,9 @@ pub fn deep_delete_observed(
     observer: &mut dyn FnMut(u32, &Path),
 ) -> Result<ShredReport> {
     if passes == 0 {
-        return Err(Error::InvalidArgument("at least one overwrite pass is required"));
+        return Err(Error::InvalidArgument(
+            "at least one overwrite pass is required",
+        ));
     }
     let meta = fs::symlink_metadata(path)?;
     if !meta.file_type().is_file() {
@@ -79,7 +81,10 @@ pub fn deep_delete_observed(
 
     drop(file);
     fs::remove_file(path)?;
-    Ok(ShredReport { passes, bytes_per_pass: len })
+    Ok(ShredReport {
+        passes,
+        bytes_per_pass: len,
+    })
 }
 
 #[cfg(test)]

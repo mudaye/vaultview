@@ -17,10 +17,13 @@ fn adding_folders_rejects_duplicates_files_and_missing_paths() {
     assert!(fav.add(&folder).unwrap());
     assert!(!fav.add(&folder).unwrap());
     assert!(fav.contains(&folder));
-    assert_eq!(fav.folders(), &[folder.clone()]);
+    assert_eq!(fav.folders(), std::slice::from_ref(&folder));
 
     assert!(matches!(fav.add(&file), Err(Error::NotADirectory(_))));
-    assert!(matches!(fav.add(&dir.path().join("missing")), Err(Error::Io(_))));
+    assert!(matches!(
+        fav.add(&dir.path().join("missing")),
+        Err(Error::Io(_))
+    ));
     assert_eq!(fav.folders().len(), 1);
 }
 
@@ -82,14 +85,23 @@ fn stored_metadata_contains_only_the_version_and_folder_paths() {
     let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
     keys.sort();
     assert_eq!(keys, vec!["folders", "version"]);
-    assert_eq!(object["version"], serde_json::json!(FAVORITES_FORMAT_VERSION));
+    assert_eq!(
+        object["version"],
+        serde_json::json!(FAVORITES_FORMAT_VERSION)
+    );
     assert_eq!(object["folders"].as_array().unwrap().len(), 1);
 }
 
 #[test]
 fn invalid_or_unsupported_json_is_rejected() {
-    assert!(matches!(Favorites::from_json("not json"), Err(Error::Serialization(_))));
-    assert!(matches!(Favorites::from_json("{}"), Err(Error::Serialization(_))));
+    assert!(matches!(
+        Favorites::from_json("not json"),
+        Err(Error::Serialization(_))
+    ));
+    assert!(matches!(
+        Favorites::from_json("{}"),
+        Err(Error::Serialization(_))
+    ));
     assert!(matches!(
         Favorites::from_json(r#"{"version":99,"folders":[]}"#),
         Err(Error::Serialization(_))
@@ -108,7 +120,10 @@ fn loading_a_corrupt_store_is_an_error_not_a_silent_reset() {
     let dir = tempfile::tempdir().unwrap();
     let store = dir.path().join(FAVORITES_FILE_NAME);
     fs::write(&store, b"{ definitely not valid").unwrap();
-    assert!(matches!(Favorites::load(&store), Err(Error::Serialization(_))));
+    assert!(matches!(
+        Favorites::load(&store),
+        Err(Error::Serialization(_))
+    ));
     assert_eq!(fs::read(&store).unwrap(), b"{ definitely not valid");
 }
 
@@ -117,7 +132,11 @@ fn save_creates_parent_directories_and_leaves_no_temporary_files() {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("photos");
     fs::create_dir(&folder).unwrap();
-    let store = dir.path().join("nested").join("config").join(FAVORITES_FILE_NAME);
+    let store = dir
+        .path()
+        .join("nested")
+        .join("config")
+        .join(FAVORITES_FILE_NAME);
 
     let mut fav = Favorites::new();
     fav.add(&folder).unwrap();
@@ -162,7 +181,10 @@ fn unavailable_favorites_are_identified() {
     fs::write(&file, b"x").unwrap();
 
     assert_eq!(status(&folder), FavoriteStatus::Available);
-    assert_eq!(status(&dir.path().join("moved_away")), FavoriteStatus::Missing);
+    assert_eq!(
+        status(&dir.path().join("moved_away")),
+        FavoriteStatus::Missing
+    );
     assert_eq!(status(&file), FavoriteStatus::NotADirectory);
 }
 

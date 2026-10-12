@@ -45,10 +45,16 @@ fn passwords_are_returned_most_recent_first_without_duplicates() {
     let mut store = PasswordStore::new();
     assert!(store.remember("first-password"));
     assert!(store.remember("second-password"));
-    assert_eq!(store.candidates(), vec!["second-password", "first-password"]);
+    assert_eq!(
+        store.candidates(),
+        vec!["second-password", "first-password"]
+    );
 
     assert!(store.remember("first-password"));
-    assert_eq!(store.candidates(), vec!["first-password", "second-password"]);
+    assert_eq!(
+        store.candidates(),
+        vec!["first-password", "second-password"]
+    );
     assert_eq!(store.len(), 2);
 }
 
@@ -197,7 +203,10 @@ fn unlock_requires_a_password_when_none_is_available() {
     let dir = tempfile::tempdir().unwrap();
     let path = encrypted_file(dir.path(), "a.jpg.vvenc", b"hello world", PW1);
     let mut session = Session::new();
-    assert!(matches!(session.unlock(&path, None), Err(Error::PasswordRequired)));
+    assert!(matches!(
+        session.unlock(&path, None),
+        Err(Error::PasswordRequired)
+    ));
 }
 
 #[test]
@@ -208,11 +217,17 @@ fn unlock_with_a_new_password_remembers_it_for_the_session() {
     let mut session = Session::new();
 
     let mut dec = session.unlock(&path, Some(PW1)).unwrap();
-    assert_eq!(dec.read_plaintext(1 << 20).unwrap().as_slice(), data.as_slice());
+    assert_eq!(
+        dec.read_plaintext(1 << 20).unwrap().as_slice(),
+        data.as_slice()
+    );
     assert_eq!(session.passwords.candidates(), vec![PW1]);
 
     let mut again = session.unlock(&path, None).unwrap();
-    assert_eq!(again.read_plaintext(1 << 20).unwrap().as_slice(), data.as_slice());
+    assert_eq!(
+        again.read_plaintext(1 << 20).unwrap().as_slice(),
+        data.as_slice()
+    );
 }
 
 #[test]
@@ -222,7 +237,10 @@ fn wrong_password_is_rejected_not_remembered_and_leaves_the_file_unchanged() {
     let before = fs::read(&path).unwrap();
     let mut session = Session::new();
 
-    assert!(matches!(session.unlock(&path, Some(PW2)), Err(Error::WrongPassword)));
+    assert!(matches!(
+        session.unlock(&path, Some(PW2)),
+        Err(Error::WrongPassword)
+    ));
     assert!(session.passwords.is_empty());
     assert_eq!(fs::read(&path).unwrap(), before);
 }
@@ -233,7 +251,10 @@ fn retained_passwords_that_do_not_match_still_require_a_new_one() {
     let path = encrypted_file(dir.path(), "a.jpg.vvenc", b"payload", PW1);
     let mut session = Session::new();
     session.passwords.remember(PW2);
-    assert!(matches!(session.unlock(&path, None), Err(Error::PasswordRequired)));
+    assert!(matches!(
+        session.unlock(&path, None),
+        Err(Error::PasswordRequired)
+    ));
 }
 
 #[test]
@@ -243,7 +264,10 @@ fn forgetting_the_password_requires_re_entry() {
     let mut session = Session::new();
     session.unlock(&path, Some(PW1)).unwrap();
     session.forget_password();
-    assert!(matches!(session.unlock(&path, None), Err(Error::PasswordRequired)));
+    assert!(matches!(
+        session.unlock(&path, None),
+        Err(Error::PasswordRequired)
+    ));
 }
 
 #[test]
@@ -256,11 +280,21 @@ fn files_from_different_batches_open_with_their_own_remembered_passwords() {
     session.unlock(&second, Some(PW2)).unwrap();
 
     assert_eq!(
-        session.unlock(&first, None).unwrap().read_plaintext(1 << 20).unwrap().as_slice(),
+        session
+            .unlock(&first, None)
+            .unwrap()
+            .read_plaintext(1 << 20)
+            .unwrap()
+            .as_slice(),
         b"first batch"
     );
     assert_eq!(
-        session.unlock(&second, None).unwrap().read_plaintext(1 << 20).unwrap().as_slice(),
+        session
+            .unlock(&second, None)
+            .unwrap()
+            .read_plaintext(1 << 20)
+            .unwrap()
+            .as_slice(),
         b"second batch"
     );
     assert_eq!(session.passwords.len(), 2);
@@ -272,7 +306,13 @@ fn unlock_rejects_files_that_are_not_encrypted() {
     let plain = dir.path().join("plain.txt");
     fs::write(&plain, b"just text").unwrap();
     let mut session = Session::new();
-    assert!(matches!(session.unlock(&plain, Some(PW1)), Err(Error::NotEncrypted)));
-    assert!(matches!(session.unlock(&plain, None), Err(Error::NotEncrypted)));
+    assert!(matches!(
+        session.unlock(&plain, Some(PW1)),
+        Err(Error::NotEncrypted)
+    ));
+    assert!(matches!(
+        session.unlock(&plain, None),
+        Err(Error::NotEncrypted)
+    ));
     assert!(session.passwords.is_empty());
 }

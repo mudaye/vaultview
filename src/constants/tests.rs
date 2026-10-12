@@ -1,4 +1,8 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::assertions_on_constants)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::assertions_on_constants
+)]
 
 use super::*;
 
@@ -11,7 +15,10 @@ fn deep_delete_uses_three_passes() {
 fn encrypted_extension_is_lowercase_and_dotless() {
     assert_eq!(ENCRYPTED_EXTENSION, "vvenc");
     assert!(!ENCRYPTED_EXTENSION.starts_with('.'));
-    assert_eq!(ENCRYPTED_EXTENSION, ENCRYPTED_EXTENSION.to_ascii_lowercase());
+    assert_eq!(
+        ENCRYPTED_EXTENSION,
+        ENCRYPTED_EXTENSION.to_ascii_lowercase()
+    );
 }
 
 #[test]
@@ -62,7 +69,10 @@ fn default_kdf_parameters_are_within_bounds() {
     assert!((KDF_ITERATIONS_MIN..=KDF_ITERATIONS_MAX).contains(&KDF_ITERATIONS_DEFAULT));
     assert!((KDF_PARALLELISM_MIN..=KDF_PARALLELISM_MAX).contains(&KDF_PARALLELISM_DEFAULT));
     assert!(KDF_MEMORY_KIB_MIN >= 8);
-    assert!(KDF_MEMORY_KIB_DEFAULT >= 19_456, "default memory cost must stay at a sane minimum");
+    assert!(
+        KDF_MEMORY_KIB_DEFAULT >= 19_456,
+        "default memory cost must stay at a sane minimum"
+    );
 }
 
 #[test]
@@ -102,13 +112,24 @@ fn extension_lists_are_lowercase_dotless_and_disjoint() {
         assert_eq!(*ext, ext.to_ascii_lowercase());
     }
     for ext in IMAGE_EXTENSIONS {
-        assert!(!VIDEO_EXTENSIONS.contains(ext), "{ext} listed as both image and video");
+        assert!(
+            !VIDEO_EXTENSIONS.contains(ext),
+            "{ext} listed as both image and video"
+        );
     }
-    for required in ["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "avif"] {
-        assert!(IMAGE_EXTENSIONS.contains(&required), "missing image extension {required}");
+    for required in [
+        "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "avif",
+    ] {
+        assert!(
+            IMAGE_EXTENSIONS.contains(&required),
+            "missing image extension {required}"
+        );
     }
     for required in ["mp4", "mov", "mkv", "webm", "avi", "mpg", "mpeg"] {
-        assert!(VIDEO_EXTENSIONS.contains(&required), "missing video extension {required}");
+        assert!(
+            VIDEO_EXTENSIONS.contains(&required),
+            "missing video extension {required}"
+        );
     }
     assert!(!IMAGE_EXTENSIONS.contains(&ENCRYPTED_EXTENSION));
     assert!(!VIDEO_EXTENSIONS.contains(&ENCRYPTED_EXTENSION));

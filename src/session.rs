@@ -23,7 +23,9 @@ pub struct PasswordStore {
 
 impl fmt::Debug for PasswordStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PasswordStore").field("count", &self.items.len()).finish()
+        f.debug_struct("PasswordStore")
+            .field("count", &self.items.len())
+            .finish()
     }
 }
 
@@ -80,7 +82,10 @@ pub struct DecryptedCache {
 impl DecryptedCache {
     /// Creates an empty cache holding at most `max_bytes` bytes.
     pub fn new(max_bytes: usize) -> Self {
-        Self { entries: Vec::new(), max_bytes }
+        Self {
+            entries: Vec::new(),
+            max_bytes,
+        }
     }
 
     /// Stores `data` for `path`, evicting the least recently used entries.
@@ -94,7 +99,10 @@ impl DecryptedCache {
         while !self.entries.is_empty() && self.total_bytes() + data.len() > self.max_bytes {
             self.entries.remove(0);
         }
-        self.entries.push(CacheEntry { path, data: Zeroizing::new(data) });
+        self.entries.push(CacheEntry {
+            path,
+            data: Zeroizing::new(data),
+        });
         true
     }
 
@@ -215,7 +223,11 @@ impl Session {
                 Err(other) => return Err(other),
             }
         }
-        Err(if explicit.is_some() { Error::WrongPassword } else { Error::PasswordRequired })
+        Err(if explicit.is_some() {
+            Error::WrongPassword
+        } else {
+            Error::PasswordRequired
+        })
     }
 }
 

@@ -18,7 +18,10 @@ fn normal_delete_removes_a_file() {
 #[test]
 fn normal_delete_reports_missing_files_and_refuses_directories() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(matches!(normal_delete(&dir.path().join("nope")), Err(Error::Io(_))));
+    assert!(matches!(
+        normal_delete(&dir.path().join("nope")),
+        Err(Error::Io(_))
+    ));
     let sub = dir.path().join("folder");
     fs::create_dir(&sub).unwrap();
     assert!(matches!(normal_delete(&sub), Err(Error::NotAFile(_))));
@@ -49,9 +52,16 @@ fn every_pass_overwrites_the_whole_file_with_fresh_random_data() {
     let mut previous = original.clone();
     let report = deep_delete_observed(&path, 3, &mut |pass, p| {
         let now = fs::read(p).unwrap();
-        assert_eq!(now.len(), original.len(), "length must not change during overwriting");
+        assert_eq!(
+            now.len(),
+            original.len(),
+            "length must not change during overwriting"
+        );
         assert_ne!(now, previous, "pass {pass} must change the contents");
-        assert!(now.iter().any(|b| *b != now[0]), "pass {pass} must not be constant");
+        assert!(
+            now.iter().any(|b| *b != now[0]),
+            "pass {pass} must not be constant"
+        );
         assert!(now.iter().zip(&original).filter(|(a, b)| a != b).count() > now.len() / 2);
         previous = now;
         seen.push(pass);
@@ -87,7 +97,10 @@ fn zero_passes_is_rejected_and_nothing_is_deleted() {
 #[test]
 fn missing_files_and_directories_are_errors() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(matches!(deep_delete(&dir.path().join("nope")), Err(Error::Io(_))));
+    assert!(matches!(
+        deep_delete(&dir.path().join("nope")),
+        Err(Error::Io(_))
+    ));
     let sub = dir.path().join("folder");
     fs::create_dir(&sub).unwrap();
     assert!(matches!(deep_delete(&sub), Err(Error::NotAFile(_))));
@@ -141,7 +154,13 @@ fn encrypted_files_can_be_deep_deleted_like_any_other_file() {
         compress: false,
     };
     let mut file = fs::File::create(&path).unwrap();
-    encrypt_stream(&mut Cursor::new(vec![7u8; 5000]), &mut file, "fixture-password-xyz", &opts).unwrap();
+    encrypt_stream(
+        &mut Cursor::new(vec![7u8; 5000]),
+        &mut file,
+        "fixture-password-xyz",
+        &opts,
+    )
+    .unwrap();
     drop(file);
     assert!(crate::format::is_encrypted_file(&path));
 

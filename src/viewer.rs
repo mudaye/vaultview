@@ -42,7 +42,11 @@ fn usable(image: Size, viewport: Size) -> bool {
 impl ViewTransform {
     /// A new view that fits the image to the window.
     pub fn new() -> Self {
-        Self { mode: ViewMode::FitWindow, zoom: 1.0, pan: (0.0, 0.0) }
+        Self {
+            mode: ViewMode::FitWindow,
+            zoom: 1.0,
+            pan: (0.0, 0.0),
+        }
     }
 
     /// The current scaling mode.
@@ -58,7 +62,11 @@ impl ViewTransform {
     /// The effective scale factor for the given image and viewport sizes.
     pub fn scale(&self, image: Size, viewport: Size) -> f32 {
         if !usable(image, viewport) {
-            return if self.mode == ViewMode::Manual { self.zoom } else { 1.0 };
+            return if self.mode == ViewMode::Manual {
+                self.zoom
+            } else {
+                1.0
+            };
         }
         let fit = (viewport.0 / image.0).min(viewport.1 / image.1);
         match self.mode {
@@ -115,7 +123,11 @@ impl ViewTransform {
         }
         let target = (current * factor).clamp(ZOOM_MIN, ZOOM_MAX);
         let ratio = target / current;
-        let base = if self.mode == ViewMode::Manual { self.pan } else { (0.0, 0.0) };
+        let base = if self.mode == ViewMode::Manual {
+            self.pan
+        } else {
+            (0.0, 0.0)
+        };
         self.pan = (
             anchor.0 - (anchor.0 - base.0) * ratio,
             anchor.1 - (anchor.1 - base.1) * ratio,
@@ -138,7 +150,12 @@ impl ViewTransform {
     pub fn image_rect(&self, image: Size, viewport: Size) -> (f32, f32, f32, f32) {
         let scale = self.scale(image, viewport);
         let (w, h) = (image.0 * scale, image.1 * scale);
-        ((viewport.0 - w) / 2.0 + self.pan.0, (viewport.1 - h) / 2.0 + self.pan.1, w, h)
+        (
+            (viewport.0 - w) / 2.0 + self.pan.0,
+            (viewport.1 - h) / 2.0 + self.pan.1,
+            w,
+            h,
+        )
     }
 
     fn clamp_pan(&mut self, image: Size, viewport: Size) {
@@ -151,7 +168,10 @@ impl ViewTransform {
         }
         let max_x = ((image.0 * self.zoom - viewport.0) / 2.0).max(0.0);
         let max_y = ((image.1 * self.zoom - viewport.1) / 2.0).max(0.0);
-        self.pan = (self.pan.0.clamp(-max_x, max_x), self.pan.1.clamp(-max_y, max_y));
+        self.pan = (
+            self.pan.0.clamp(-max_x, max_x),
+            self.pan.1.clamp(-max_y, max_y),
+        );
     }
 }
 

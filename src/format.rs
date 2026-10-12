@@ -114,10 +114,18 @@ impl Take<'_> {
 impl Header {
     /// Serialises the header into its fixed-size on-disk representation.
     pub fn to_bytes(&self) -> [u8; HEADER_LEN] {
-        let mut out = Put { buf: [0u8; HEADER_LEN], pos: 0 };
+        let mut out = Put {
+            buf: [0u8; HEADER_LEN],
+            pos: 0,
+        };
         out.put(&MAGIC);
         out.put(&self.version.to_le_bytes());
-        out.put(&[KDF_ID_ARGON2ID, AEAD_ID_XCHACHA20_POLY1305, self.compression, self.chunk_size_log2]);
+        out.put(&[
+            KDF_ID_ARGON2ID,
+            AEAD_ID_XCHACHA20_POLY1305,
+            self.compression,
+            self.chunk_size_log2,
+        ]);
         out.put(&self.kdf.memory_kib.to_le_bytes());
         out.put(&self.kdf.iterations.to_le_bytes());
         out.put(&self.kdf.parallelism.to_le_bytes());
@@ -140,7 +148,10 @@ impl Header {
         if bytes.len() < MAGIC.len() + 2 {
             return Err(Error::InvalidHeader("truncated header"));
         }
-        let mut cur = Take { buf: bytes, pos: MAGIC.len() };
+        let mut cur = Take {
+            buf: bytes,
+            pos: MAGIC.len(),
+        };
         let version = u16::from_le_bytes(cur.array::<2>());
         if version != FORMAT_VERSION {
             return Err(Error::UnsupportedVersion(version));

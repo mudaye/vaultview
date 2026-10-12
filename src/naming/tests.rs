@@ -5,10 +5,22 @@ use std::path::{Path, PathBuf};
 
 #[test]
 fn encryption_appends_the_extension_and_keeps_the_original() {
-    assert_eq!(encrypted_path(Path::new("dir/holiday.jpg")), PathBuf::from("dir/holiday.jpg.vvenc"));
-    assert_eq!(encrypted_path(Path::new("dir/README")), PathBuf::from("dir/README.vvenc"));
-    assert_eq!(encrypted_path(Path::new(".env")), PathBuf::from(".env.vvenc"));
-    assert_eq!(encrypted_path(Path::new("archive.tar.gz")), PathBuf::from("archive.tar.gz.vvenc"));
+    assert_eq!(
+        encrypted_path(Path::new("dir/holiday.jpg")),
+        PathBuf::from("dir/holiday.jpg.vvenc")
+    );
+    assert_eq!(
+        encrypted_path(Path::new("dir/README")),
+        PathBuf::from("dir/README.vvenc")
+    );
+    assert_eq!(
+        encrypted_path(Path::new(".env")),
+        PathBuf::from(".env.vvenc")
+    );
+    assert_eq!(
+        encrypted_path(Path::new("archive.tar.gz")),
+        PathBuf::from("archive.tar.gz.vvenc")
+    );
 }
 
 #[test]
@@ -25,8 +37,14 @@ fn extension_detection_is_case_insensitive_and_exact() {
 
 #[test]
 fn original_path_strips_only_the_encrypted_extension() {
-    assert_eq!(original_path(Path::new("dir/a.jpg.vvenc")), Some(PathBuf::from("dir/a.jpg")));
-    assert_eq!(original_path(Path::new("a.VVENC")), Some(PathBuf::from("a")));
+    assert_eq!(
+        original_path(Path::new("dir/a.jpg.vvenc")),
+        Some(PathBuf::from("dir/a.jpg"))
+    );
+    assert_eq!(
+        original_path(Path::new("a.VVENC")),
+        Some(PathBuf::from("a"))
+    );
     assert_eq!(original_path(Path::new(".vvenc")), None);
     assert_eq!(original_path(Path::new("a.jpg")), None);
     assert_eq!(original_path(Path::new("a.vvencx")), None);
@@ -34,9 +52,20 @@ fn original_path_strips_only_the_encrypted_extension() {
 
 #[test]
 fn encrypting_then_restoring_the_name_is_lossless() {
-    for name in ["holiday.jpg", "my file (1).png", "фото.jpg", "noext", ".hidden", "a.b.c.d"] {
+    for name in [
+        "holiday.jpg",
+        "my file (1).png",
+        "фото.jpg",
+        "noext",
+        ".hidden",
+        "a.b.c.d",
+    ] {
         let original = Path::new("some/dir").join(name);
-        assert_eq!(original_path(&encrypted_path(&original)), Some(original.clone()), "{name}");
+        assert_eq!(
+            original_path(&encrypted_path(&original)),
+            Some(original.clone()),
+            "{name}"
+        );
     }
 }
 
@@ -86,7 +115,9 @@ fn destination_never_silently_overwrites_an_existing_file() {
     std::fs::write(dir.path().join("a.jpg"), b"precious").unwrap();
     assert_eq!(
         decryption_destination(&encrypted),
-        Destination::NeedsChoice { suggested: dir.path().join("a (1).jpg") }
+        Destination::NeedsChoice {
+            suggested: dir.path().join("a (1).jpg")
+        }
     );
 }
 

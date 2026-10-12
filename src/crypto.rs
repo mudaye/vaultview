@@ -23,9 +23,9 @@ use rand::RngCore;
 use zeroize::Zeroizing;
 
 use crate::constants::{
-    COMPRESSION_DEFLATE, COMPRESSION_MIN_SAVING_PERCENT, COMPRESSION_NONE,
-    COMPRESSION_SAMPLE_LEN, CHUNK_SIZE_LOG2, FORMAT_VERSION, HEADER_LEN, IO_BLOCK_LEN, KEY_LEN,
-    NONCE_LEN, NONCE_PREFIX_LEN, SALT_LEN, TAG_LEN, WRAPPED_KEY_LEN,
+    CHUNK_SIZE_LOG2, COMPRESSION_DEFLATE, COMPRESSION_MIN_SAVING_PERCENT, COMPRESSION_NONE,
+    COMPRESSION_SAMPLE_LEN, FORMAT_VERSION, HEADER_LEN, IO_BLOCK_LEN, KEY_LEN, NONCE_LEN,
+    NONCE_PREFIX_LEN, SALT_LEN, TAG_LEN, WRAPPED_KEY_LEN,
 };
 use crate::error::{Error, Result};
 use crate::format::{self, Header, KdfParams};
@@ -41,7 +41,10 @@ pub struct EncryptOptions {
 
 impl Default for EncryptOptions {
     fn default() -> Self {
-        Self { kdf: KdfParams::default(), compress: crate::constants::COMPRESS_ON_ENCRYPT_DEFAULT }
+        Self {
+            kdf: KdfParams::default(),
+            compress: crate::constants::COMPRESS_ON_ENCRYPT_DEFAULT,
+        }
     }
 }
 
@@ -80,8 +83,13 @@ pub fn derive_kek(
         return Err(Error::EmptyPassword);
     }
     params.validate()?;
-    let argon_params = Params::new(params.memory_kib, params.iterations, params.parallelism, Some(KEY_LEN))
-        .map_err(|e| Error::Kdf(e.to_string()))?;
+    let argon_params = Params::new(
+        params.memory_kib,
+        params.iterations,
+        params.parallelism,
+        Some(KEY_LEN),
+    )
+    .map_err(|e| Error::Kdf(e.to_string()))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
     let mut out = Zeroizing::new([0u8; KEY_LEN]);
     argon2
@@ -213,13 +221,20 @@ impl<'a, W: Write> ChunkSealer<'a, W> {
     }
 
     fn emit(&mut self, last: bool) -> io::Result<()> {
-        let take = if last { self.buf.len() } else { self.chunk_size };
+        let take = if last {
+            self.buf.len()
+        } else {
+            self.chunk_size
+        };
         let nonce = chunk_nonce(&self.nonce_prefix, self.index, last);
         let sealed = self
             .cipher
             .encrypt(
                 XNonce::from_slice(&nonce),
-                Payload { msg: &self.buf[..take], aad: &self.aad },
+                Payload {
+                    msg: &self.buf[..take],
+                    aad: &self.aad,
+                },
             )
             .map_err(|_| io::Error::other("authenticated encryption failed"))?;
         self.writer.write_all(&sealed)?;
@@ -267,7 +282,11 @@ pub fn encrypt_stream<R: Read, W: Write>(
     }
     options.kdf.validate()?;
 
-    let sample = if options.compress { read_up_to(reader, COMPRESSION_SAMPLE_LEN)? } else { Vec::new() };
+    let sample = if options.compress {
+        read_up_to(reader, COMPRESSION_SAMPLE_LEN)?
+    } else {
+        Vec::new()
+    };
     let compress = options.compress && should_compress(&sample);
     let mut input = Cursor::new(sample).chain(&mut *reader);
 
@@ -279,7 +298,11 @@ pub fn encrypt_stream<R: Read, W: Write>(
     let kek = derive_kek(password, &salt, &options.kdf)?;
     let mut header = Header {
         version: FORMAT_VERSION,
-        compression: if compress { COMPRESSION_DEFLATE } else { COMPRESSION_NONE },
+        compression: if compress {
+            COMPRESSION_DEFLATE
+        } else {
+            COMPRESSION_NONE
+        },
         chunk_size_log2: CHUNK_SIZE_LOG2,
         kdf: options.kdf,
         salt,
@@ -314,7 +337,9 @@ pub fn encrypt_stream<R: Read, W: Write>(
 
 fn map_read_error(error: io::Error) -> Error {
     match error.kind() {
-        ErrorKind::InvalidData | ErrorKind::InvalidInput | ErrorKind::UnexpectedEof => Error::Corrupted,
+        ErrorKind::InvalidData | ErrorKind::InvalidInput | ErrorKind::UnexpectedEof => {
+            Error::Corrupted
+        }
         _ => Error::Io(error),
     }
 }
@@ -345,10 +370,19 @@ impl<R: Read + Seek> Decryptor<R> {
         let header = format::read_header(&mut reader)?;
         let file_len = reader.seek(SeekFrom::End(0))?;
         let kek = derive_kek(password, &header.salt, &header.kdf)?;
-        let file_key = unwrap_file_key(&kek, &header.wrap_nonce, &header.key_wrap_aad(), &header.wrapped_key)?;
+        let file_key = unwrap_file_key(
+            &kek,
+            &header.wrap_nonce,
+            &header.key_wrap_aad(),
+            &header.wrapped_key,
+        )?;
         let chunk_size = header.chunk_size();
         let payload_len = format::payload_len(file_len, chunk_size)?;
-        let chunk_count = if payload_len == 0 { 1 } else { payload_len.div_ceil(chunk_size as u64) };
+        let chunk_count = if payload_len == 0 {
+            1
+        } else {
+            payload_len.div_ceil(chunk_size as u64)
+        };
         let cipher = cipher_for(&file_key)?;
         Ok(Self {
             aad: header.chunk_aad(),
@@ -403,7 +437,13 @@ impl<R: Read + Seek> Decryptor<R> {
         let nonce = chunk_nonce(&self.header.nonce_prefix, index, is_last);
         let plain = self
             .cipher
-            .decrypt(XNonce::from_slice(&nonce), Payload { msg: &sealed, aad: &self.aad })
+            .decrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: &sealed,
+                    aad: &self.aad,
+                },
+            )
             .map_err(|_| Error::Corrupted)?;
         self.cached = Some((index, Zeroizing::new(plain)));
         Ok(())
@@ -506,7 +546,10 @@ impl<R: Read + Seek> Seek for Decryptor<R> {
         };
         let new = base + delta;
         if new < 0 {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "seek before the start of the stream"));
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "seek before the start of the stream",
+            ));
         }
         self.pos = u64::try_from(new)
             .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "seek position out of range"))?;
@@ -518,7 +561,11 @@ impl<R: Read + Seek> Seek for Decryptor<R> {
 ///
 /// Every chunk is authenticated before its bytes are written. On error the
 /// output may be incomplete and must be discarded by the caller.
-pub fn decrypt_stream<R: Read + Seek, W: Write>(reader: R, writer: &mut W, password: &str) -> Result<u64> {
+pub fn decrypt_stream<R: Read + Seek, W: Write>(
+    reader: R,
+    writer: &mut W,
+    password: &str,
+) -> Result<u64> {
     let mut decryptor = Decryptor::open(reader, password)?;
     decryptor.drain_plain(|data| writer.write_all(data).map_err(Error::from))
 }

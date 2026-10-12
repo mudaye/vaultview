@@ -60,7 +60,9 @@ pub fn check_dimensions(width: u32, height: u32) -> Result<()> {
         return Err(Error::Decode("the image has no pixels".to_string()));
     }
     if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
-        return Err(Error::TooLarge { limit: MAX_IMAGE_PIXELS });
+        return Err(Error::TooLarge {
+            limit: MAX_IMAGE_PIXELS,
+        });
     }
     Ok(())
 }
@@ -75,7 +77,11 @@ pub fn normalize_frame_delay(delay: Duration) -> Duration {
 }
 
 fn webp_is_animated(bytes: &[u8]) -> bool {
-    bytes.len() > 20 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" && &bytes[12..16] == b"VP8X" && bytes[20] & 0x02 != 0
+    bytes.len() > 20
+        && &bytes[0..4] == b"RIFF"
+        && &bytes[8..12] == b"WEBP"
+        && &bytes[12..16] == b"VP8X"
+        && bytes[20] & 0x02 != 0
 }
 
 fn collect_frames(frames: image::Frames<'_>) -> Result<Decoded> {
@@ -88,9 +94,18 @@ fn collect_frames(frames: image::Frames<'_>) -> Result<Decoded> {
         let (width, height) = buffer.dimensions();
         pixels += u64::from(width) * u64::from(height);
         if pixels > MAX_IMAGE_PIXELS {
-            return Err(Error::TooLarge { limit: MAX_IMAGE_PIXELS });
+            return Err(Error::TooLarge {
+                limit: MAX_IMAGE_PIXELS,
+            });
         }
-        out.push(Frame { image: ImageData { width, height, rgba: buffer.into_raw() }, delay });
+        out.push(Frame {
+            image: ImageData {
+                width,
+                height,
+                rgba: buffer.into_raw(),
+            },
+            delay,
+        });
     }
     match out.len() {
         0 => Err(Error::Decode("the image contains no frames".to_string())),
@@ -125,7 +140,11 @@ pub fn decode_image(bytes: &[u8]) -> Result<Decoded> {
             let decoded = image::load_from_memory_with_format(bytes, format).map_err(decode_err)?;
             let rgba = decoded.into_rgba8();
             let (width, height) = rgba.dimensions();
-            let mut data = ImageData { width, height, rgba: rgba.into_raw() };
+            let mut data = ImageData {
+                width,
+                height,
+                rgba: rgba.into_raw(),
+            };
             if format == ImageFormat::Jpeg {
                 if let Some(orientation) = jpeg_exif_orientation(bytes) {
                     data = apply_exif_orientation(data, orientation);
@@ -157,7 +176,10 @@ pub fn jpeg_exif_orientation(bytes: &[u8]) -> Option<u8> {
             pos += 2;
             continue;
         }
-        let length = usize::from(u16::from_be_bytes([*bytes.get(pos + 2)?, *bytes.get(pos + 3)?]));
+        let length = usize::from(u16::from_be_bytes([
+            *bytes.get(pos + 2)?,
+            *bytes.get(pos + 3)?,
+        ]));
         if length < 2 || pos + 2 + length > bytes.len() {
             return None;
         }
@@ -177,11 +199,24 @@ fn tiff_orientation(tiff: &[u8]) -> Option<u8> {
     };
     let u16_at = |offset: usize| -> Option<u16> {
         let raw = [*tiff.get(offset)?, *tiff.get(offset + 1)?];
-        Some(if big_endian { u16::from_be_bytes(raw) } else { u16::from_le_bytes(raw) })
+        Some(if big_endian {
+            u16::from_be_bytes(raw)
+        } else {
+            u16::from_le_bytes(raw)
+        })
     };
     let u32_at = |offset: usize| -> Option<u32> {
-        let raw = [*tiff.get(offset)?, *tiff.get(offset + 1)?, *tiff.get(offset + 2)?, *tiff.get(offset + 3)?];
-        Some(if big_endian { u32::from_be_bytes(raw) } else { u32::from_le_bytes(raw) })
+        let raw = [
+            *tiff.get(offset)?,
+            *tiff.get(offset + 1)?,
+            *tiff.get(offset + 2)?,
+            *tiff.get(offset + 3)?,
+        ];
+        Some(if big_endian {
+            u32::from_be_bytes(raw)
+        } else {
+            u32::from_le_bytes(raw)
+        })
     };
     if u16_at(2)? != 42 {
         return None;
@@ -227,7 +262,11 @@ pub fn apply_exif_orientation(data: ImageData, orientation: u8) -> ImageData {
             out[dst..dst + 4].copy_from_slice(&data.rgba[src..src + 4]);
         }
     }
-    ImageData { width: nw as u32, height: nh as u32, rgba: out }
+    ImageData {
+        width: nw as u32,
+        height: nh as u32,
+        rgba: out,
+    }
 }
 
 /// Size an image must be scaled to so that neither side exceeds `max_side`,
@@ -255,10 +294,23 @@ pub fn downscale_to_fit(data: ImageData, max_side: u32) -> ImageData {
     }
     match image::RgbaImage::from_raw(data.width, data.height, data.rgba) {
         Some(buffer) => {
-            let resized = image::imageops::resize(&buffer, new_width, new_height, image::imageops::FilterType::Triangle);
-            ImageData { width: new_width, height: new_height, rgba: resized.into_raw() }
+            let resized = image::imageops::resize(
+                &buffer,
+                new_width,
+                new_height,
+                image::imageops::FilterType::Triangle,
+            );
+            ImageData {
+                width: new_width,
+                height: new_height,
+                rgba: resized.into_raw(),
+            }
         }
-        None => ImageData { width: 1, height: 1, rgba: vec![0; 4] },
+        None => ImageData {
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        },
     }
 }
 

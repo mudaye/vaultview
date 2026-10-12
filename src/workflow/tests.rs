@@ -72,10 +72,21 @@ fn expect_failed(outcome: Outcome) -> Error {
 
 #[test]
 fn password_policy_counts_characters_not_bytes() {
-    assert!(matches!(validate_password(""), Err(Error::PasswordTooShort { min: MIN_PASSWORD_CHARS })));
-    assert!(matches!(validate_password("1234567"), Err(Error::PasswordTooShort { .. })));
+    assert!(matches!(
+        validate_password(""),
+        Err(Error::PasswordTooShort {
+            min: MIN_PASSWORD_CHARS
+        })
+    ));
+    assert!(matches!(
+        validate_password("1234567"),
+        Err(Error::PasswordTooShort { .. })
+    ));
     assert!(validate_password("12345678").is_ok());
-    assert!(matches!(validate_password("ééééééé"), Err(Error::PasswordTooShort { .. })));
+    assert!(matches!(
+        validate_password("ééééééé"),
+        Err(Error::PasswordTooShort { .. })
+    ));
     assert!(validate_password("éééééééé").is_ok());
 }
 
@@ -115,11 +126,17 @@ fn empty_and_compressible_files_encrypt_correctly() {
 fn missing_files_and_directories_fail_without_side_effects() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.png");
-    assert!(matches!(expect_failed(encrypt_one(&missing, PW, &opts(false))), Error::Io(_)));
+    assert!(matches!(
+        expect_failed(encrypt_one(&missing, PW, &opts(false))),
+        Error::Io(_)
+    ));
 
     let sub = dir.path().join("folder");
     fs::create_dir(&sub).unwrap();
-    assert!(matches!(expect_failed(encrypt_one(&sub, PW, &opts(false))), Error::NotAFile(_)));
+    assert!(matches!(
+        expect_failed(encrypt_one(&sub, PW, &opts(false))),
+        Error::NotAFile(_)
+    ));
 
     assert_eq!(dir_names(dir.path()), vec!["folder"]);
 }
@@ -186,7 +203,9 @@ struct FailAfterVerify;
 
 impl Hooks for FailAfterVerify {
     fn after_verify(&mut self) -> std::io::Result<()> {
-        Err(std::io::Error::other("simulated failure before the original is touched"))
+        Err(std::io::Error::other(
+            "simulated failure before the original is touched",
+        ))
     }
 }
 
@@ -194,7 +213,9 @@ struct FailAfterOverwrite;
 
 impl Hooks for FailAfterOverwrite {
     fn after_overwrite(&mut self) -> std::io::Result<()> {
-        Err(std::io::Error::other("simulated failure after the original was overwritten"))
+        Err(std::io::Error::other(
+            "simulated failure after the original was overwritten",
+        ))
     }
 }
 
@@ -220,16 +241,29 @@ fn failure_after_the_overwrite_is_reported_as_indeterminate_with_a_recovery_copy
     let outcome = encrypt_one_with(&src, PW, &opts(false), &mut FailAfterOverwrite);
 
     let recovery = match &outcome {
-        Outcome::Indeterminate { recovery_copy: Some(p), .. } => p.clone(),
+        Outcome::Indeterminate {
+            recovery_copy: Some(p),
+            ..
+        } => p.clone(),
         other => panic!("expected indeterminate with recovery copy, got {other:?}"),
     };
     assert!(recovery.exists());
-    assert_eq!(decrypt_file(&recovery, PW), data, "recovery copy must decrypt to the original");
-    assert!(is_encrypted_file(&src), "original path now holds the ciphertext");
+    assert_eq!(
+        decrypt_file(&recovery, PW),
+        data,
+        "recovery copy must decrypt to the original"
+    );
+    assert!(
+        is_encrypted_file(&src),
+        "original path now holds the ciphertext"
+    );
     assert_eq!(fs::read(&src).unwrap(), fs::read(&recovery).unwrap());
     assert!(!dir.path().join("a.jpg.vvenc").exists());
 
-    let report = FileReport { path: src.clone(), outcome };
+    let report = FileReport {
+        path: src.clone(),
+        outcome,
+    };
     let message = report.message();
     assert!(message.contains("a.jpg"));
     assert!(message.contains(&recovery.file_name().unwrap().to_string_lossy().into_owned()));
@@ -248,7 +282,10 @@ fn batch_reports_every_file_in_order_and_continues_after_failures() {
     let paths = vec![one.clone(), missing.clone(), two.clone()];
 
     let mut calls: Vec<(usize, usize, PathBuf)> = Vec::new();
-    let report = encrypt_batch(&paths, PW, &opts(false), &mut |i, n, p| calls.push((i, n, p.to_path_buf()))).unwrap();
+    let report = encrypt_batch(&paths, PW, &opts(false), &mut |i, n, p| {
+        calls.push((i, n, p.to_path_buf()))
+    })
+    .unwrap();
 
     assert_eq!(report.files.len(), 3);
     assert_eq!(report.files[0].path, one);
@@ -258,7 +295,14 @@ fn batch_reports_every_file_in_order_and_continues_after_failures() {
     assert_eq!(report.failed(), 1);
     assert_eq!(report.indeterminate(), 0);
     assert!(!report.all_succeeded());
-    assert_eq!(calls, vec![(0, 3, one.clone()), (1, 3, missing.clone()), (2, 3, two.clone())]);
+    assert_eq!(
+        calls,
+        vec![
+            (0, 3, one.clone()),
+            (1, 3, missing.clone()),
+            (2, 3, two.clone())
+        ]
+    );
 
     assert_eq!(decrypt_file(&dir.path().join("one.png.vvenc"), PW), d1);
     assert_eq!(decrypt_file(&dir.path().join("two.png.vvenc"), PW), d2);
@@ -294,7 +338,12 @@ fn batch_with_an_invalid_password_touches_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let data = pattern(500);
     let a = write_file(dir.path(), "a.bin", &data);
-    let result = encrypt_batch(&[a.clone()], "short", &opts(false), &mut |_, _, _| {});
+    let result = encrypt_batch(
+        std::slice::from_ref(&a),
+        "short",
+        &opts(false),
+        &mut |_, _, _| {},
+    );
     assert!(matches!(result, Err(Error::PasswordTooShort { .. })));
     assert_eq!(fs::read(&a).unwrap(), data);
     assert_eq!(dir_names(dir.path()), vec!["a.bin"]);
@@ -311,9 +360,20 @@ fn batch_marks_directories_as_failed_instead_of_skipping_them() {
     let dir = tempfile::tempdir().unwrap();
     let sub = dir.path().join("folder");
     fs::create_dir(&sub).unwrap();
-    let report = encrypt_batch(&[sub.clone()], PW, &opts(false), &mut |_, _, _| {}).unwrap();
+    let report = encrypt_batch(
+        std::slice::from_ref(&sub),
+        PW,
+        &opts(false),
+        &mut |_, _, _| {},
+    )
+    .unwrap();
     assert_eq!(report.files.len(), 1);
-    assert!(matches!(report.files[0].outcome, Outcome::Failed { error: Error::NotAFile(_) }));
+    assert!(matches!(
+        report.files[0].outcome,
+        Outcome::Failed {
+            error: Error::NotAFile(_)
+        }
+    ));
 }
 
 #[test]
@@ -327,6 +387,9 @@ fn report_messages_identify_the_affected_file() {
     assert!(ok.message().contains("photo.jpg"));
 
     let missing = dir.path().join("gone.png");
-    let failed = FileReport { path: missing.clone(), outcome: encrypt_one(&missing, PW, &opts(false)) };
+    let failed = FileReport {
+        path: missing.clone(),
+        outcome: encrypt_one(&missing, PW, &opts(false)),
+    };
     assert!(failed.message().contains("gone.png"));
 }

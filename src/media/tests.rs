@@ -107,7 +107,10 @@ fn animated_gifs_keep_all_frames_and_their_delays() {
             assert_eq!(frames.len(), 2);
             assert_eq!((frames[0].image.width, frames[0].image.height), (4, 4));
             assert_eq!(frames[0].delay, Duration::from_millis(200));
-            assert_eq!(frames[1].delay, Duration::from_millis(FRAME_DELAY_DEFAULT_MS));
+            assert_eq!(
+                frames[1].delay,
+                Duration::from_millis(FRAME_DELAY_DEFAULT_MS)
+            );
             assert_ne!(frames[0].image.pixel(0, 0), frames[1].image.pixel(0, 0));
         }
         other => panic!("expected an animation, got {other:?}"),
@@ -118,16 +121,25 @@ fn animated_gifs_keep_all_frames_and_their_delays() {
 fn frame_delays_below_the_minimum_are_normalised() {
     let default = Duration::from_millis(FRAME_DELAY_DEFAULT_MS);
     assert_eq!(normalize_frame_delay(Duration::ZERO), default);
-    assert_eq!(normalize_frame_delay(Duration::from_millis(FRAME_DELAY_MIN_MS - 1)), default);
+    assert_eq!(
+        normalize_frame_delay(Duration::from_millis(FRAME_DELAY_MIN_MS - 1)),
+        default
+    );
     let at_min = Duration::from_millis(FRAME_DELAY_MIN_MS);
     assert_eq!(normalize_frame_delay(at_min), at_min);
-    assert_eq!(normalize_frame_delay(Duration::from_millis(500)), Duration::from_millis(500));
+    assert_eq!(
+        normalize_frame_delay(Duration::from_millis(500)),
+        Duration::from_millis(500)
+    );
 }
 
 #[test]
 fn undecodable_input_is_an_error_not_a_panic() {
     assert!(matches!(decode_image(&[]), Err(Error::Decode(_))));
-    assert!(matches!(decode_image(b"this is not an image at all"), Err(Error::Decode(_))));
+    assert!(matches!(
+        decode_image(b"this is not an image at all"),
+        Err(Error::Decode(_))
+    ));
     let png = encode(&sample_image(), image::ImageFormat::Png);
     assert!(matches!(decode_image(&png[..20]), Err(Error::Decode(_))));
     let mut corrupted = png.clone();
@@ -143,8 +155,14 @@ fn dimension_limits_are_enforced_without_overflow() {
     assert!(check_dimensions(10_000, 10_000).is_ok());
     assert!(matches!(check_dimensions(0, 10), Err(Error::Decode(_))));
     assert!(matches!(check_dimensions(10, 0), Err(Error::Decode(_))));
-    assert!(matches!(check_dimensions(20_000, 20_000), Err(Error::TooLarge { .. })));
-    assert!(matches!(check_dimensions(u32::MAX, u32::MAX), Err(Error::TooLarge { .. })));
+    assert!(matches!(
+        check_dimensions(20_000, 20_000),
+        Err(Error::TooLarge { .. })
+    ));
+    assert!(matches!(
+        check_dimensions(u32::MAX, u32::MAX),
+        Err(Error::TooLarge { .. })
+    ));
     assert!(check_dimensions(1, 1).is_ok());
 }
 
@@ -152,10 +170,19 @@ fn dimension_limits_are_enforced_without_overflow() {
 
 #[test]
 fn jpeg_orientation_is_read_from_both_byte_orders() {
-    assert_eq!(jpeg_exif_orientation(&jpeg_with_orientation(true, 6)), Some(6));
-    assert_eq!(jpeg_exif_orientation(&jpeg_with_orientation(false, 8)), Some(8));
+    assert_eq!(
+        jpeg_exif_orientation(&jpeg_with_orientation(true, 6)),
+        Some(6)
+    );
+    assert_eq!(
+        jpeg_exif_orientation(&jpeg_with_orientation(false, 8)),
+        Some(8)
+    );
     for v in 1..=8u16 {
-        assert_eq!(jpeg_exif_orientation(&jpeg_with_orientation(true, v)), Some(v as u8));
+        assert_eq!(
+            jpeg_exif_orientation(&jpeg_with_orientation(true, v)),
+            Some(v as u8)
+        );
     }
 }
 
@@ -163,9 +190,18 @@ fn jpeg_orientation_is_read_from_both_byte_orders() {
 fn invalid_or_missing_orientation_is_ignored() {
     assert_eq!(jpeg_exif_orientation(&jpeg_with_orientation(true, 0)), None);
     assert_eq!(jpeg_exif_orientation(&jpeg_with_orientation(true, 9)), None);
-    assert_eq!(jpeg_exif_orientation(&encode(&sample_image(), image::ImageFormat::Png)), None);
-    assert_eq!(jpeg_exif_orientation(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00]), None);
-    assert_eq!(jpeg_exif_orientation(&jpeg_with_orientation(true, 6)[..12]), None);
+    assert_eq!(
+        jpeg_exif_orientation(&encode(&sample_image(), image::ImageFormat::Png)),
+        None
+    );
+    assert_eq!(
+        jpeg_exif_orientation(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00]),
+        None
+    );
+    assert_eq!(
+        jpeg_exif_orientation(&jpeg_with_orientation(true, 6)[..12]),
+        None
+    );
     assert_eq!(jpeg_exif_orientation(&[]), None);
     assert_eq!(jpeg_exif_orientation(&[0xFF; 64]), None);
 }
@@ -188,7 +224,11 @@ fn marked_image() -> ImageData {
             rgba.extend_from_slice(&[x as u8, y as u8, 0, 255]);
         }
     }
-    ImageData { width: w, height: h, rgba }
+    ImageData {
+        width: w,
+        height: h,
+        rgba,
+    }
 }
 
 #[test]
@@ -198,7 +238,11 @@ fn every_exif_orientation_maps_pixels_correctly() {
         let out = apply_exif_orientation(marked_image(), orientation);
         let swapped = (5..=8).contains(&orientation);
         let (ew, eh) = if swapped { (h, w) } else { (w, h) };
-        assert_eq!((out.width, out.height), (ew, eh), "orientation {orientation}");
+        assert_eq!(
+            (out.width, out.height),
+            (ew, eh),
+            "orientation {orientation}"
+        );
         assert_eq!(out.rgba.len(), (ew * eh * 4) as usize);
         for y in 0..h {
             for x in 0..w {
@@ -261,7 +305,11 @@ fn fit_within_preserves_aspect_ratio_and_never_upscales() {
 
 #[test]
 fn downscaling_produces_a_buffer_of_the_expected_size() {
-    let big = ImageData { width: 100, height: 50, rgba: vec![200; 100 * 50 * 4] };
+    let big = ImageData {
+        width: 100,
+        height: 50,
+        rgba: vec![200; 100 * 50 * 4],
+    };
     let small = downscale_to_fit(big, 25);
     assert_eq!((small.width, small.height), (25, 13));
     assert_eq!(small.rgba.len(), 25 * 13 * 4);

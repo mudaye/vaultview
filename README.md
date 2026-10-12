@@ -24,7 +24,7 @@ VaultView lets you browse local folders, view images and play videos, and encryp
 
 | Platform | Status |
 |---|---|
-| Windows (x86-64, MSVC toolchain) | Unit tests pass without the `video` feature. Video and GUI not yet verified. |
+| Windows (x86-64, MSVC toolchain) | Builds with and without video; unit tests and clippy pass. GUI and video playback not yet verified at run time. |
 | Linux | Targeted, not yet verified. |
 | macOS | Targeted, not yet verified. |
 

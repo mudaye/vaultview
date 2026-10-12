@@ -89,18 +89,27 @@ enum Content {
     Image(ImageView),
     #[cfg(feature = "video")]
     Video(VideoView),
-    Failed { path: PathBuf, message: String },
+    Failed {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 enum Loaded {
-    Image { decoded: Decoded, encrypted: bool },
+    Image {
+        decoded: Decoded,
+        encrypted: bool,
+    },
     #[cfg(feature = "video")]
-    Video { player: VideoPlayer, encrypted: bool },
+    Video {
+        player: VideoPlayer,
+        encrypted: bool,
+    },
 }
 
 #[cfg_attr(not(feature = "video"), allow(dead_code))]
 enum VideoInput {
-    Stream(Decryptor<File>),
+    Stream(Box<Decryptor<File>>),
     Memory(Zeroizing<Vec<u8>>),
 }
 
@@ -132,9 +141,18 @@ struct EncryptDialog {
 }
 
 enum Dialog {
-    Unlock { path: PathBuf, password: Zeroizing<String>, error: Option<String>, focus: bool },
+    Unlock {
+        path: PathBuf,
+        password: Zeroizing<String>,
+        error: Option<String>,
+        focus: bool,
+    },
     Encrypt(EncryptDialog),
-    Delete { files: Vec<PathBuf>, deep: bool, acknowledged: bool },
+    Delete {
+        files: Vec<PathBuf>,
+        deep: bool,
+        acknowledged: bool,
+    },
     Report(Report),
 }
 
@@ -157,13 +175,20 @@ enum DialogEvent {
 }
 
 enum JobMsg {
-    Progress { index: usize, total: usize, name: String },
+    Progress {
+        index: usize,
+        total: usize,
+        name: String,
+    },
     Finished(JobOutcome),
 }
 
 enum JobOutcome {
     Encrypt(Result<BatchReport>),
-    Delete { deep: bool, results: Vec<(PathBuf, Result<Option<ShredReport>>)> },
+    Delete {
+        deep: bool,
+        results: Vec<(PathBuf, Result<Option<ShredReport>>)>,
+    },
 }
 
 struct Job {
@@ -268,7 +293,11 @@ fn file_label(path: &Path) -> String {
 
 #[cfg(feature = "video")]
 fn fmt_time(seconds: f64) -> String {
-    let total = if seconds.is_finite() && seconds > 0.0 { seconds as u64 } else { 0 };
+    let total = if seconds.is_finite() && seconds > 0.0 {
+        seconds as u64
+    } else {
+        0
+    };
     let (h, m, s) = (total / 3600, (total / 60) % 60, total % 60);
     if h > 0 {
         format!("{h}:{m:02}:{s:02}")
@@ -280,13 +309,18 @@ fn fmt_time(seconds: f64) -> String {
 fn read_limited(path: &Path) -> Result<Vec<u8>> {
     let len = fs::metadata(path)?.len();
     if len > c::MAX_DECRYPTED_IMAGE_BYTES as u64 {
-        return Err(Error::TooLarge { limit: c::MAX_DECRYPTED_IMAGE_BYTES as u64 });
+        return Err(Error::TooLarge {
+            limit: c::MAX_DECRYPTED_IMAGE_BYTES as u64,
+        });
     }
     Ok(fs::read(path)?)
 }
 
 fn unsupported(path: &Path) -> Error {
-    Error::Unsupported(format!("{} is not a supported image or video", file_label(path)))
+    Error::Unsupported(format!(
+        "{} is not a supported image or video",
+        file_label(path)
+    ))
 }
 
 #[cfg(windows)]
@@ -350,7 +384,9 @@ impl VaultApp {
             Some(path) => match Favorites::load(path) {
                 Ok(list) => list,
                 Err(error) => {
-                    startup_note = Some(format!("Favorites could not be loaded ({error}); starting with an empty list."));
+                    startup_note = Some(format!(
+                        "Favorites could not be loaded ({error}); starting with an empty list."
+                    ));
                     Favorites::new()
                 }
             },
@@ -489,7 +525,10 @@ impl VaultApp {
         match browser::classify_file(path)? {
             EntryKind::Image => {
                 let bytes = read_limited(path)?;
-                Ok(Loaded::Image { decoded: media::decode_image(&bytes)?, encrypted: false })
+                Ok(Loaded::Image {
+                    decoded: media::decode_image(&bytes)?,
+                    encrypted: false,
+                })
             }
             EntryKind::Video => self.load_video_file(path),
             EntryKind::Encrypted => self.load_encrypted(path, password),
@@ -500,7 +539,10 @@ impl VaultApp {
     fn load_encrypted(&mut self, path: &Path, password: Option<&str>) -> Result<Loaded> {
         if let Some(bytes) = self.session.cache.get(path) {
             let decoded = media::decode_image(bytes)?;
-            return Ok(Loaded::Image { decoded, encrypted: true });
+            return Ok(Loaded::Image {
+                decoded,
+                encrypted: true,
+            });
         }
         let mut decryptor = self.session.unlock(path, password)?;
         let extension = naming::original_path(path)
@@ -508,7 +550,10 @@ impl VaultApp {
 
         if decryptor.is_compressed() {
             let data = decryptor.read_plaintext(c::MAX_DECRYPTED_IMAGE_BYTES)?;
-            let kind = browser::classify_bytes(&data[..data.len().min(c::SNIFF_LEN)], extension.as_deref());
+            let kind = browser::classify_bytes(
+                &data[..data.len().min(c::SNIFF_LEN)],
+                extension.as_deref(),
+            );
             match kind {
                 EntryKind::Image => self.finish_image(path, &data),
                 EntryKind::Video => self.load_video_decrypted(VideoInput::Memory(data)),
@@ -517,14 +562,19 @@ impl VaultApp {
         } else {
             let mut prefix = Vec::with_capacity(c::SNIFF_LEN);
             decryptor.seek(SeekFrom::Start(0))?;
-            decryptor.by_ref().take(c::SNIFF_LEN as u64).read_to_end(&mut prefix)?;
+            decryptor
+                .by_ref()
+                .take(c::SNIFF_LEN as u64)
+                .read_to_end(&mut prefix)?;
             let kind = browser::classify_bytes(&prefix, extension.as_deref());
             match kind {
                 EntryKind::Image => {
                     let data = decryptor.read_plaintext(c::MAX_DECRYPTED_IMAGE_BYTES)?;
                     self.finish_image(path, &data)
                 }
-                EntryKind::Video => self.load_video_decrypted(VideoInput::Stream(decryptor)),
+                EntryKind::Video => {
+                    self.load_video_decrypted(VideoInput::Stream(Box::new(decryptor)))
+                }
                 _ => Err(unsupported(path)),
             }
         }
@@ -533,7 +583,10 @@ impl VaultApp {
     fn finish_image(&mut self, path: &Path, data: &[u8]) -> Result<Loaded> {
         let decoded = media::decode_image(data)?;
         self.session.cache.insert(path.to_path_buf(), data.to_vec());
-        Ok(Loaded::Image { decoded, encrypted: true })
+        Ok(Loaded::Image {
+            decoded,
+            encrypted: true,
+        })
     }
 
     #[cfg(feature = "video")]
@@ -542,7 +595,8 @@ impl VaultApp {
             Ok(())
         } else {
             Err(Error::Unsupported(
-                "video playback is unavailable because GStreamer could not be initialised".to_string(),
+                "video playback is unavailable because GStreamer could not be initialised"
+                    .to_string(),
             ))
         }
     }
@@ -550,27 +604,37 @@ impl VaultApp {
     #[cfg(feature = "video")]
     fn load_video_file(&self, path: &Path) -> Result<Loaded> {
         self.require_video()?;
-        Ok(Loaded::Video { player: VideoPlayer::open_file(path)?, encrypted: false })
+        Ok(Loaded::Video {
+            player: VideoPlayer::open_file(path)?,
+            encrypted: false,
+        })
     }
 
     #[cfg(feature = "video")]
     fn load_video_decrypted(&self, input: VideoInput) -> Result<Loaded> {
         self.require_video()?;
         let source: Box<dyn MediaSource> = match input {
-            VideoInput::Stream(decryptor) => Box::new(decryptor),
+            VideoInput::Stream(decryptor) => decryptor,
             VideoInput::Memory(data) => Box::new(MemorySource::new(data)),
         };
-        Ok(Loaded::Video { player: VideoPlayer::open_stream(source)?, encrypted: true })
+        Ok(Loaded::Video {
+            player: VideoPlayer::open_stream(source)?,
+            encrypted: true,
+        })
     }
 
     #[cfg(not(feature = "video"))]
     fn load_video_file(&self, _path: &Path) -> Result<Loaded> {
-        Err(Error::Unsupported("this build of the application has no video support".to_string()))
+        Err(Error::Unsupported(
+            "this build of the application has no video support".to_string(),
+        ))
     }
 
     #[cfg(not(feature = "video"))]
     fn load_video_decrypted(&self, _input: VideoInput) -> Result<Loaded> {
-        Err(Error::Unsupported("this build of the application has no video support".to_string()))
+        Err(Error::Unsupported(
+            "this build of the application has no video support".to_string(),
+        ))
     }
 
     fn upload(&mut self, ctx: &egui::Context, image: &ImageData) -> egui::TextureHandle {
@@ -579,7 +643,11 @@ impl VaultApp {
             [image.width as usize, image.height as usize],
             &image.rgba,
         );
-        ctx.load_texture(format!("media-{}", self.texture_counter), color, egui::TextureOptions::LINEAR)
+        ctx.load_texture(
+            format!("media-{}", self.texture_counter),
+            color,
+            egui::TextureOptions::LINEAR,
+        )
     }
 
     fn install(&mut self, ctx: &egui::Context, path: PathBuf, loaded: Loaded) {
@@ -600,12 +668,21 @@ impl VaultApp {
         };
     }
 
-    fn make_image_view(&mut self, ctx: &egui::Context, path: PathBuf, decoded: Decoded, encrypted: bool) -> ImageView {
+    fn make_image_view(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        decoded: Decoded,
+        encrypted: bool,
+    ) -> ImageView {
         let frames: Vec<(ImageData, Duration)> = match decoded {
             Decoded::Still(image) => vec![(image, Duration::ZERO)],
             Decoded::Animated(frames) => frames.into_iter().map(|f| (f.image, f.delay)).collect(),
         };
-        let original = frames.first().map(|(i, _)| (i.width, i.height)).unwrap_or((1, 1));
+        let original = frames
+            .first()
+            .map(|(i, _)| (i.width, i.height))
+            .unwrap_or((1, 1));
         let mut shown = (1u32, 1u32);
         let mut textures = Vec::with_capacity(frames.len());
         for (index, (image, delay)) in frames.into_iter().enumerate() {
@@ -631,12 +708,22 @@ impl VaultApp {
 
     fn navigate(&mut self, ctx: &egui::Context, forward: bool) {
         let target: Option<PathBuf> = if self.nav.current().is_some() {
-            (if forward { self.nav.next_path() } else { self.nav.previous_path() }).map(Path::to_path_buf)
+            (if forward {
+                self.nav.next_path()
+            } else {
+                self.nav.previous_path()
+            })
+            .map(Path::to_path_buf)
         } else {
             let media: Vec<&Entry> = self
                 .entries
                 .iter()
-                .filter(|e| matches!(e.kind, EntryKind::Image | EntryKind::Video | EntryKind::Encrypted))
+                .filter(|e| {
+                    matches!(
+                        e.kind,
+                        EntryKind::Image | EntryKind::Video | EntryKind::Encrypted
+                    )
+                })
                 .collect();
             (if forward { media.first() } else { media.last() }).map(|e| e.path.clone())
         };
@@ -689,27 +776,50 @@ impl VaultApp {
             self.say("Tick one or more files in the list first (or open one).");
             return;
         }
-        self.dialog = Some(Dialog::Delete { files, deep, acknowledged: false });
+        self.dialog = Some(Dialog::Delete {
+            files,
+            deep,
+            acknowledged: false,
+        });
     }
 
-    fn spawn_encrypt(&mut self, ctx: &egui::Context, files: Vec<PathBuf>, password: Zeroizing<String>) {
+    fn spawn_encrypt(
+        &mut self,
+        ctx: &egui::Context,
+        files: Vec<PathBuf>,
+        password: Zeroizing<String>,
+    ) {
         self.close_media();
         self.session.passwords.remember(&password);
-        let options = EncryptOptions { kdf: KdfParams::default(), compress: self.compress };
+        let options = EncryptOptions {
+            kdf: KdfParams::default(),
+            compress: self.compress,
+        };
         let (tx, rx) = mpsc::channel();
         let repaint = ctx.clone();
         let total = files.len();
         std::thread::spawn(move || {
             let progress_tx = tx.clone();
             let progress_repaint = repaint.clone();
-            let result = workflow::encrypt_batch(&files, &password, &options, &mut |index, total, path| {
-                let _ = progress_tx.send(JobMsg::Progress { index, total, name: file_label(path) });
-                progress_repaint.request_repaint();
-            });
+            let result =
+                workflow::encrypt_batch(&files, &password, &options, &mut |index, total, path| {
+                    let _ = progress_tx.send(JobMsg::Progress {
+                        index,
+                        total,
+                        name: file_label(path),
+                    });
+                    progress_repaint.request_repaint();
+                });
             let _ = tx.send(JobMsg::Finished(JobOutcome::Encrypt(result)));
             repaint.request_repaint();
         });
-        self.job = Some(Job { title: "Encrypting".to_string(), rx, index: 0, total, current: String::new() });
+        self.job = Some(Job {
+            title: "Encrypting".to_string(),
+            rx,
+            index: 0,
+            total,
+            current: String::new(),
+        });
     }
 
     fn spawn_delete(&mut self, ctx: &egui::Context, files: Vec<PathBuf>, deep: bool) {
@@ -720,7 +830,11 @@ impl VaultApp {
         std::thread::spawn(move || {
             let mut results = Vec::with_capacity(files.len());
             for (index, path) in files.into_iter().enumerate() {
-                let _ = tx.send(JobMsg::Progress { index, total, name: file_label(&path) });
+                let _ = tx.send(JobMsg::Progress {
+                    index,
+                    total,
+                    name: file_label(&path),
+                });
                 repaint.request_repaint();
                 let result = if deep {
                     shred::deep_delete(&path).map(Some)
@@ -733,7 +847,13 @@ impl VaultApp {
             repaint.request_repaint();
         });
         let title = if deep { "Deep deleting" } else { "Deleting" };
-        self.job = Some(Job { title: title.to_string(), rx, index: 0, total, current: String::new() });
+        self.job = Some(Job {
+            title: title.to_string(),
+            rx,
+            index: 0,
+            total,
+            current: String::new(),
+        });
     }
 
     fn poll_job(&mut self, ctx: &egui::Context) {
@@ -799,9 +919,15 @@ impl VaultApp {
                     batch.indeterminate()
                 );
                 if batch.succeeded() > 0 {
-                    summary.push_str(" Keep the password safe: without it these files cannot be recovered.");
+                    summary.push_str(
+                        " Keep the password safe: without it these files cannot be recovered.",
+                    );
                 }
-                Report { title: "Encryption finished".to_string(), summary, lines }
+                Report {
+                    title: "Encryption finished".to_string(),
+                    summary,
+                    lines,
+                }
             }
             JobOutcome::Encrypt(Err(error)) => Report {
                 title: "Encryption failed".to_string(),
@@ -833,13 +959,22 @@ impl VaultApp {
                             format!(
                                 "Failed: {}: {error}. The file may still exist{}.",
                                 path.display(),
-                                if deep { " and may have been partially overwritten" } else { "" }
+                                if deep {
+                                    " and may have been partially overwritten"
+                                } else {
+                                    ""
+                                }
                             ),
                         )),
                     }
                 }
                 Report {
-                    title: if deep { "Deep deletion finished" } else { "Deletion finished" }.to_string(),
+                    title: if deep {
+                        "Deep deletion finished"
+                    } else {
+                        "Deletion finished"
+                    }
+                    .to_string(),
                     summary: format!("{ok} of {} file(s) processed successfully.", results.len()),
                     lines,
                 }
@@ -931,7 +1066,9 @@ impl VaultApp {
             Action::FitWindow => self.with_image(|v| v.transform.fit_window()),
             Action::FitImage => self.with_image(|v| v.transform.fit_image()),
             Action::ResetView => self.with_image(|v| v.transform.reset()),
-            Action::Pan(dx, dy) => self.with_image(|v| v.transform.pan_by((dx, dy), v.size, v.viewport)),
+            Action::Pan(dx, dy) => {
+                self.with_image(|v| v.transform.pan_by((dx, dy), v.size, v.viewport))
+            }
             Action::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
@@ -1066,11 +1203,19 @@ impl VaultApp {
                             texture.set(color, egui::TextureOptions::LINEAR);
                         }
                     } else {
-                        view.texture = Some(ctx.load_texture("video-frame", color, egui::TextureOptions::LINEAR));
+                        view.texture = Some(ctx.load_texture(
+                            "video-frame",
+                            color,
+                            egui::TextureOptions::LINEAR,
+                        ));
                     }
                     view.frame_size = dims;
                 }
-                let interval = if view.player.is_playing() { c::VIDEO_REPAINT_MS } else { c::VIDEO_REPAINT_MS * 8 };
+                let interval = if view.player.is_playing() {
+                    c::VIDEO_REPAINT_MS
+                } else {
+                    c::VIDEO_REPAINT_MS * 8
+                };
                 ctx.request_repaint_after(Duration::from_millis(interval));
             }
             _ => {}
@@ -1083,10 +1228,18 @@ impl VaultApp {
         let busy = self.job.is_some();
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
-                if ui.button("Encrypt…").on_hover_text("Encrypt the ticked files (or the open file) in place").clicked() {
+                if ui
+                    .button("Encrypt…")
+                    .on_hover_text("Encrypt the ticked files (or the open file) in place")
+                    .clicked()
+                {
                     actions.push(Action::BeginEncrypt);
                 }
-                if ui.button("Delete…").on_hover_text("Delete using the system's standard file deletion").clicked() {
+                if ui
+                    .button("Delete…")
+                    .on_hover_text("Delete using the system's standard file deletion")
+                    .clicked()
+                {
                     actions.push(Action::BeginDelete { deep: false });
                 }
                 if ui
@@ -1106,7 +1259,11 @@ impl VaultApp {
                 if ui.button("Clear decrypted cache").clicked() {
                     actions.push(Action::ClearCache);
                 }
-                if ui.button("Lock all").on_hover_text("Close media, forget passwords, clear the cache").clicked() {
+                if ui
+                    .button("Lock all")
+                    .on_hover_text("Close media, forget passwords, clear the cache")
+                    .clicked()
+                {
                     actions.push(Action::LockAll);
                 }
             });
@@ -1124,7 +1281,11 @@ impl VaultApp {
                 if ui.button("Fit window").clicked() {
                     actions.push(Action::FitWindow);
                 }
-                if ui.button("Fit image").on_hover_text("Fit, but never enlarge small images").clicked() {
+                if ui
+                    .button("Fit image")
+                    .on_hover_text("Fit, but never enlarge small images")
+                    .clicked()
+                {
                     actions.push(Action::FitImage);
                 }
                 if ui.button("Reset").clicked() {
@@ -1132,10 +1293,18 @@ impl VaultApp {
                 }
             }
             ui.separator();
-            if ui.button("◀").on_hover_text("Previous file (Left arrow)").clicked() {
+            if ui
+                .button("◀")
+                .on_hover_text("Previous file (Left arrow)")
+                .clicked()
+            {
                 actions.push(Action::Prev);
             }
-            if ui.button("▶").on_hover_text("Next file (Right arrow)").clicked() {
+            if ui
+                .button("▶")
+                .on_hover_text("Next file (Right arrow)")
+                .clicked()
+            {
                 actions.push(Action::Next);
             }
             if ui.button("Help").clicked() {
@@ -1173,7 +1342,8 @@ impl VaultApp {
             if ui.button("Up").clicked() {
                 actions.push(Action::GoUp);
             }
-            let response = ui.add(egui::TextEdit::singleline(&mut self.path_input).desired_width(f32::INFINITY));
+            let response = ui
+                .add(egui::TextEdit::singleline(&mut self.path_input).desired_width(f32::INFINITY));
             if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                 actions.push(Action::GoToInput);
             }
@@ -1185,7 +1355,11 @@ impl VaultApp {
             if ui.button("Refresh").clicked() {
                 actions.push(Action::Refresh);
             }
-            if ui.button("★ Favorite").on_hover_text("Add this folder to favorites").clicked() {
+            if ui
+                .button("★ Favorite")
+                .on_hover_text("Add this folder to favorites")
+                .clicked()
+            {
                 actions.push(Action::AddFavorite);
             }
         });
@@ -1231,7 +1405,11 @@ impl VaultApp {
                         } else {
                             format!("{} bytes", entry.size)
                         };
-                        if ui.selectable_label(is_current, label).on_hover_text(hover).clicked() {
+                        if ui
+                            .selectable_label(is_current, label)
+                            .on_hover_text(hover)
+                            .clicked()
+                        {
                             if entry.is_dir() {
                                 actions.push(Action::EnterDir(entry.path.clone()));
                             } else {
@@ -1251,35 +1429,37 @@ impl VaultApp {
             ui.weak("No favorite folders yet. Open a folder under Files and press ★ Favorite.");
             return;
         }
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for (folder, status) in &self.fav_status {
-                ui.horizontal(|ui| {
-                    let usable = *status == FavoriteStatus::Available;
-                    let name = format!("★ {}", folder.display());
-                    if ui.add_enabled(usable, egui::Button::new(name)).clicked() {
-                        actions.push(Action::OpenFavorite(folder.clone()));
-                    }
-                    match status {
-                        FavoriteStatus::Available => {}
-                        FavoriteStatus::Missing => {
-                            ui.colored_label(WARN, "missing");
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (folder, status) in &self.fav_status {
+                    ui.horizontal(|ui| {
+                        let usable = *status == FavoriteStatus::Available;
+                        let name = format!("★ {}", folder.display());
+                        if ui.add_enabled(usable, egui::Button::new(name)).clicked() {
+                            actions.push(Action::OpenFavorite(folder.clone()));
                         }
-                        FavoriteStatus::NotADirectory => {
-                            ui.colored_label(WARN, "not a folder");
+                        match status {
+                            FavoriteStatus::Available => {}
+                            FavoriteStatus::Missing => {
+                                ui.colored_label(WARN, "missing");
+                            }
+                            FavoriteStatus::NotADirectory => {
+                                ui.colored_label(WARN, "not a folder");
+                            }
+                            FavoriteStatus::Inaccessible => {
+                                ui.colored_label(WARN, "inaccessible");
+                            }
                         }
-                        FavoriteStatus::Inaccessible => {
-                            ui.colored_label(WARN, "inaccessible");
+                        if ui.small_button("Remove").clicked() {
+                            actions.push(Action::RemoveFavorite(folder.clone()));
                         }
-                    }
-                    if ui.small_button("Remove").clicked() {
-                        actions.push(Action::RemoveFavorite(folder.clone()));
-                    }
-                });
-            }
-        });
+                    });
+                }
+            });
     }
 
-    #[cfg_attr(not(feature = "video"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "video"), allow(unused_variables, clippy::ptr_arg))]
     fn ui_viewer(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         match &mut self.content {
             Content::Empty => {
@@ -1296,7 +1476,8 @@ impl VaultApp {
                 });
             }
             Content::Image(view) => {
-                let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+                let (rect, response) =
+                    ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
                 let viewport = (rect.width(), rect.height());
                 view.viewport = viewport;
                 let size = view.size;
@@ -1405,7 +1586,12 @@ impl VaultApp {
         let mut keep = true;
         let compress = &mut self.compress;
         match &mut dialog {
-            Dialog::Unlock { path, password, error, focus } => {
+            Dialog::Unlock {
+                path,
+                password,
+                error,
+                focus,
+            } => {
                 egui::Window::new("Password required")
                     .collapsible(false)
                     .resizable(false)
@@ -1425,10 +1611,14 @@ impl VaultApp {
                             response.request_focus();
                             *focus = false;
                         }
-                        let submit = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                        let submit =
+                            response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                         ui.horizontal(|ui| {
                             if (ui.button("Open").clicked() || submit) && !password.is_empty() {
-                                let entered = std::mem::replace(&mut *password, Zeroizing::new(String::new()));
+                                let entered = std::mem::replace(
+                                    &mut *password,
+                                    Zeroizing::new(String::new()),
+                                );
                                 event = DialogEvent::Unlock(path.clone(), entered);
                                 keep = false;
                             }
@@ -1496,8 +1686,16 @@ impl VaultApp {
                         });
                     });
             }
-            Dialog::Delete { files, deep, acknowledged } => {
-                let title = if *deep { "Deep delete files" } else { "Delete files" };
+            Dialog::Delete {
+                files,
+                deep,
+                acknowledged,
+            } => {
+                let title = if *deep {
+                    "Deep delete files"
+                } else {
+                    "Delete files"
+                };
                 egui::Window::new(title)
                     .collapsible(false)
                     .resizable(false)
@@ -1549,11 +1747,13 @@ impl VaultApp {
                     .show(ctx, |ui| {
                         ui.label(report.summary.as_str());
                         ui.separator();
-                        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                            for (severity, line) in &report.lines {
-                                ui.colored_label(severity_color(*severity), line.as_str());
-                            }
-                        });
+                        egui::ScrollArea::vertical()
+                            .max_height(300.0)
+                            .show(ui, |ui| {
+                                for (severity, line) in &report.lines {
+                                    ui.colored_label(severity_color(*severity), line.as_str());
+                                }
+                            });
                         ui.separator();
                         if ui.button("OK").clicked() {
                             keep = false;
@@ -1566,7 +1766,9 @@ impl VaultApp {
         }
         match event {
             DialogEvent::None => {}
-            DialogEvent::Unlock(path, password) => self.open_media(ctx, path, Some(password.as_str())),
+            DialogEvent::Unlock(path, password) => {
+                self.open_media(ctx, path, Some(password.as_str()))
+            }
             DialogEvent::StartEncrypt(files, password) => self.spawn_encrypt(ctx, files, password),
             DialogEvent::StartDelete(files, deep) => self.spawn_delete(ctx, files, deep),
         }
@@ -1581,9 +1783,15 @@ impl VaultApp {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                let fraction = if job.total == 0 { 0.0 } else { job.index as f32 / job.total as f32 };
+                let fraction = if job.total == 0 {
+                    0.0
+                } else {
+                    job.index as f32 / job.total as f32
+                };
                 let shown = (job.index + 1).min(job.total.max(1));
-                ui.add(egui::ProgressBar::new(fraction).text(format!("file {shown} of {}", job.total)));
+                ui.add(
+                    egui::ProgressBar::new(fraction).text(format!("file {shown} of {}", job.total)),
+                );
                 ui.label(job.current.as_str());
                 ui.weak("Please wait; do not close the application until this finishes.");
             });
@@ -1633,7 +1841,10 @@ fn video_controls(ui: &mut egui::Ui, view: &mut VideoView, actions: &mut Vec<Act
         ));
         let mut volume = view.player.volume();
         ui.spacing_mut().slider_width = 80.0;
-        if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false)).changed() {
+        if ui
+            .add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false))
+            .changed()
+        {
             view.player.set_volume(volume);
         }
         let mut muted = view.player.is_muted();
@@ -1647,7 +1858,10 @@ fn video_controls(ui: &mut egui::Ui, view: &mut VideoView, actions: &mut Vec<Act
                 .selected_text(format!("Audio {}", current + 1))
                 .show_ui(ui, |ui| {
                     for index in 0..audio_count {
-                        if ui.selectable_label(index == current, format!("Track {}", index + 1)).clicked() {
+                        if ui
+                            .selectable_label(index == current, format!("Track {}", index + 1))
+                            .clicked()
+                        {
                             view.player.set_audio_track(index);
                         }
                     }
@@ -1657,7 +1871,11 @@ fn video_controls(ui: &mut egui::Ui, view: &mut VideoView, actions: &mut Vec<Act
         if text_count > 0 {
             let enabled = view.player.subtitles_enabled();
             let current = view.player.subtitle_track().max(0);
-            let label = if enabled { format!("Subtitles {}", current + 1) } else { "Subtitles off".to_string() };
+            let label = if enabled {
+                format!("Subtitles {}", current + 1)
+            } else {
+                "Subtitles off".to_string()
+            };
             egui::ComboBox::from_id_salt("subtitle-track")
                 .selected_text(label)
                 .show_ui(ui, |ui| {
@@ -1665,7 +1883,13 @@ fn video_controls(ui: &mut egui::Ui, view: &mut VideoView, actions: &mut Vec<Act
                         view.player.set_subtitles_enabled(false);
                     }
                     for index in 0..text_count {
-                        if ui.selectable_label(enabled && index == current, format!("Track {}", index + 1)).clicked() {
+                        if ui
+                            .selectable_label(
+                                enabled && index == current,
+                                format!("Track {}", index + 1),
+                            )
+                            .clicked()
+                        {
                             view.player.set_subtitles_enabled(true);
                             view.player.set_subtitle_track(index);
                         }

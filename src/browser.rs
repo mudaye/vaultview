@@ -89,9 +89,20 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
                 if c.is_ascii_digit() && d.is_ascii_digit() {
                     let end_i = i + ca[i..].iter().take_while(|ch| ch.is_ascii_digit()).count();
                     let end_j = j + cb[j..].iter().take_while(|ch| ch.is_ascii_digit()).count();
-                    let run_a: Vec<char> = ca[i..end_i].iter().copied().skip_while(|ch| *ch == '0').collect();
-                    let run_b: Vec<char> = cb[j..end_j].iter().copied().skip_while(|ch| *ch == '0').collect();
-                    let order = run_a.len().cmp(&run_b.len()).then_with(|| run_a.cmp(&run_b));
+                    let run_a: Vec<char> = ca[i..end_i]
+                        .iter()
+                        .copied()
+                        .skip_while(|ch| *ch == '0')
+                        .collect();
+                    let run_b: Vec<char> = cb[j..end_j]
+                        .iter()
+                        .copied()
+                        .skip_while(|ch| *ch == '0')
+                        .collect();
+                    let order = run_a
+                        .len()
+                        .cmp(&run_b.len())
+                        .then_with(|| run_a.cmp(&run_b));
                     if order != Ordering::Equal {
                         return order;
                     }
@@ -135,7 +146,9 @@ pub fn list_directory(dir: &Path, show_hidden: bool) -> Result<Vec<Entry>> {
         let path = item.path();
         let name = item.file_name().to_string_lossy().into_owned();
         let meta = fs::metadata(&path).ok();
-        if !show_hidden && (name.starts_with('.') || meta.as_ref().is_some_and(has_hidden_attribute)) {
+        if !show_hidden
+            && (name.starts_with('.') || meta.as_ref().is_some_and(has_hidden_attribute))
+        {
             continue;
         }
         let (kind, size) = match &meta {
@@ -143,7 +156,12 @@ pub fn list_directory(dir: &Path, show_hidden: bool) -> Result<Vec<Entry>> {
             Some(m) => (classify_file(&path).unwrap_or(EntryKind::Other), m.len()),
             None => (EntryKind::Other, 0),
         };
-        entries.push(Entry { path, name, kind, size });
+        entries.push(Entry {
+            path,
+            name,
+            kind,
+            size,
+        });
     }
     entries.sort_by(|a, b| {
         b.is_dir()
@@ -168,10 +186,18 @@ impl NavContext {
     pub fn from_entries(entries: &[Entry]) -> Self {
         let items = entries
             .iter()
-            .filter(|e| matches!(e.kind, EntryKind::Image | EntryKind::Video | EntryKind::Encrypted))
+            .filter(|e| {
+                matches!(
+                    e.kind,
+                    EntryKind::Image | EntryKind::Video | EntryKind::Encrypted
+                )
+            })
             .map(|e| e.path.clone())
             .collect();
-        Self { items, current: None }
+        Self {
+            items,
+            current: None,
+        }
     }
 
     /// Makes `path` the current file. Returns `false` (changing nothing) when
@@ -188,7 +214,9 @@ impl NavContext {
 
     /// The current file, if any.
     pub fn current(&self) -> Option<&Path> {
-        self.current.and_then(|i| self.items.get(i)).map(PathBuf::as_path)
+        self.current
+            .and_then(|i| self.items.get(i))
+            .map(PathBuf::as_path)
     }
 
     /// The file after the current one, without moving.

@@ -79,12 +79,16 @@ pub fn unique_path(path: &Path) -> PathBuf {
 pub fn decryption_destination(encrypted: &Path) -> Destination {
     match original_path(encrypted) {
         Some(original) if !is_taken(&original) => Destination::Restored(original),
-        Some(original) => Destination::NeedsChoice { suggested: unique_path(&original) },
+        Some(original) => Destination::NeedsChoice {
+            suggested: unique_path(&original),
+        },
         None => {
             let mut name: OsString = encrypted.as_os_str().to_owned();
             name.push(".");
             name.push(DECRYPTED_FALLBACK_EXTENSION);
-            Destination::NeedsChoice { suggested: unique_path(&PathBuf::from(name)) }
+            Destination::NeedsChoice {
+                suggested: unique_path(&PathBuf::from(name)),
+            }
         }
     }
 }

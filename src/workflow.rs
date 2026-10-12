@@ -89,17 +89,26 @@ pub struct BatchReport {
 impl BatchReport {
     /// Number of files that were encrypted successfully.
     pub fn succeeded(&self) -> usize {
-        self.files.iter().filter(|f| matches!(f.outcome, Outcome::Encrypted { .. })).count()
+        self.files
+            .iter()
+            .filter(|f| matches!(f.outcome, Outcome::Encrypted { .. }))
+            .count()
     }
 
     /// Number of files that failed without being modified.
     pub fn failed(&self) -> usize {
-        self.files.iter().filter(|f| matches!(f.outcome, Outcome::Failed { .. })).count()
+        self.files
+            .iter()
+            .filter(|f| matches!(f.outcome, Outcome::Failed { .. }))
+            .count()
     }
 
     /// Number of files whose final state could not be confirmed.
     pub fn indeterminate(&self) -> usize {
-        self.files.iter().filter(|f| matches!(f.outcome, Outcome::Indeterminate { .. })).count()
+        self.files
+            .iter()
+            .filter(|f| matches!(f.outcome, Outcome::Indeterminate { .. }))
+            .count()
     }
 
     /// `true` when the batch is non-empty and every file succeeded.
@@ -111,7 +120,9 @@ impl BatchReport {
 /// Checks the password policy for a new encryption batch.
 pub fn validate_password(password: &str) -> Result<()> {
     if password.chars().count() < MIN_PASSWORD_CHARS {
-        Err(Error::PasswordTooShort { min: MIN_PASSWORD_CHARS })
+        Err(Error::PasswordTooShort {
+            min: MIN_PASSWORD_CHARS,
+        })
     } else {
         Ok(())
     }
@@ -133,11 +144,17 @@ impl Hooks for NoHooks {}
 
 enum Stop {
     Failed(Error),
-    Indeterminate { error: Error, recovery: Option<PathBuf> },
+    Indeterminate {
+        error: Error,
+        recovery: Option<PathBuf>,
+    },
 }
 
 fn uncertain(error: Error, temp: &Path) -> Stop {
-    Stop::Indeterminate { error, recovery: Some(temp.to_path_buf()) }
+    Stop::Indeterminate {
+        error,
+        recovery: Some(temp.to_path_buf()),
+    }
 }
 
 /// Encrypts one file in place. The password policy is enforced here too.
@@ -145,13 +162,19 @@ pub fn encrypt_one(path: &Path, password: &str, options: &EncryptOptions) -> Out
     encrypt_one_with(path, password, options, &mut NoHooks)
 }
 
-fn encrypt_one_with(path: &Path, password: &str, options: &EncryptOptions, hooks: &mut dyn Hooks) -> Outcome {
+fn encrypt_one_with(
+    path: &Path,
+    password: &str,
+    options: &EncryptOptions,
+    hooks: &mut dyn Hooks,
+) -> Outcome {
     match run(path, password, options, hooks) {
         Ok(output) => Outcome::Encrypted { output },
         Err(Stop::Failed(error)) => Outcome::Failed { error },
-        Err(Stop::Indeterminate { error, recovery }) => {
-            Outcome::Indeterminate { error, recovery_copy: recovery }
-        }
+        Err(Stop::Indeterminate { error, recovery }) => Outcome::Indeterminate {
+            error,
+            recovery_copy: recovery,
+        },
     }
 }
 
@@ -192,7 +215,9 @@ fn run(
     }
 
     overwrite(&mut original, &temp, stats.ciphertext_len).map_err(|e| uncertain(e, &temp))?;
-    hooks.after_overwrite().map_err(|e| uncertain(e.into(), &temp))?;
+    hooks
+        .after_overwrite()
+        .map_err(|e| uncertain(e.into(), &temp))?;
     drop(original);
 
     match files_identical(path, &temp) {
@@ -210,7 +235,12 @@ fn run(
 }
 
 /// Writes the ciphertext to a new staging file, removing it again on failure.
-fn stage(original: &mut File, temp: &Path, password: &str, options: &EncryptOptions) -> Result<EncryptStats> {
+fn stage(
+    original: &mut File,
+    temp: &Path,
+    password: &str,
+    options: &EncryptOptions,
+) -> Result<EncryptStats> {
     let file = OpenOptions::new().write(true).create_new(true).open(temp)?;
     let result = stage_into(original, file, password, options);
     if result.is_err() {
@@ -219,7 +249,12 @@ fn stage(original: &mut File, temp: &Path, password: &str, options: &EncryptOpti
     result
 }
 
-fn stage_into(original: &mut File, file: File, password: &str, options: &EncryptOptions) -> Result<EncryptStats> {
+fn stage_into(
+    original: &mut File,
+    file: File,
+    password: &str,
+    options: &EncryptOptions,
+) -> Result<EncryptStats> {
     let mut writer = BufWriter::new(file);
     original.seek(SeekFrom::Start(0))?;
     let stats = encrypt_stream(original, &mut writer, password, options)?;
@@ -292,7 +327,10 @@ pub fn encrypt_batch(
     for (index, path) in paths.iter().enumerate() {
         progress(index, total, path);
         let outcome = encrypt_one(path, password, options);
-        report.files.push(FileReport { path: path.clone(), outcome });
+        report.files.push(FileReport {
+            path: path.clone(),
+            outcome,
+        });
     }
     Ok(report)
 }

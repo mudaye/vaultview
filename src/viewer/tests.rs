@@ -109,7 +109,10 @@ fn zooming_out_re_clamps_the_pan() {
     t.pan_by((1500.0, 0.0), BIG, VIEWPORT);
     t.zoom_out(BIG, VIEWPORT);
     assert!(approx(t.scale(BIG, VIEWPORT), 1.0 / ZOOM_STEP_FACTOR));
-    assert!(approx(t.pan().0, (4000.0 / ZOOM_STEP_FACTOR - 1000.0) / 2.0));
+    assert!(approx(
+        t.pan().0,
+        (4000.0 / ZOOM_STEP_FACTOR - 1000.0) / 2.0
+    ));
 }
 
 #[test]
@@ -174,5 +177,8 @@ fn image_rect_is_centred_and_follows_the_pan() {
     t.pan_by((1500.0, 0.0), BIG, VIEWPORT);
     let (x, _, w, _) = t.image_rect(BIG, VIEWPORT);
     assert!(approx(w, 4000.0));
-    assert!(approx(x, 0.0), "left edge must align with the viewport after panning fully right");
+    assert!(
+        approx(x, 0.0),
+        "left edge must align with the viewport after panning fully right"
+    );
 }

@@ -14,7 +14,9 @@ fn png_bytes() -> Vec<u8> {
 }
 
 fn jpeg_bytes() -> Vec<u8> {
-    let mut v = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0x00];
+    let mut v = vec![
+        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0x00,
+    ];
     v.extend_from_slice(&[0u8; 32]);
     v
 }
@@ -44,7 +46,12 @@ fn encrypted_bytes() -> Vec<u8> {
 }
 
 fn entry(name: &str, kind: EntryKind) -> Entry {
-    Entry { path: PathBuf::from("/media").join(name), name: name.to_string(), kind, size: 0 }
+    Entry {
+        path: PathBuf::from("/media").join(name),
+        name: name.to_string(),
+        kind,
+        size: 0,
+    }
 }
 
 // ---------- classification ----------
@@ -73,13 +80,22 @@ fn extension_is_only_a_fallback_for_unrecognised_content() {
     assert_eq!(classify_bytes(&unknown, Some("mkv")), EntryKind::Video);
     assert_eq!(classify_bytes(&unknown, Some("txt")), EntryKind::Other);
     assert_eq!(classify_bytes(&unknown, None), EntryKind::Other);
-    assert_eq!(classify_bytes(b"hello world, plain text", None), EntryKind::Other);
+    assert_eq!(
+        classify_bytes(b"hello world, plain text", None),
+        EntryKind::Other
+    );
 }
 
 #[test]
 fn encrypted_files_are_recognised_by_magic_not_by_extension() {
-    assert_eq!(classify_bytes(&encrypted_bytes(), Some("jpg")), EntryKind::Encrypted);
-    assert_eq!(classify_bytes(&encrypted_bytes(), None), EntryKind::Encrypted);
+    assert_eq!(
+        classify_bytes(&encrypted_bytes(), Some("jpg")),
+        EntryKind::Encrypted
+    );
+    assert_eq!(
+        classify_bytes(&encrypted_bytes(), None),
+        EntryKind::Encrypted
+    );
     assert_eq!(classify_bytes(b"hello", Some("vvenc")), EntryKind::Other);
 }
 
@@ -94,7 +110,10 @@ fn classify_file_reads_the_file_prefix() {
     fs::write(&empty, b"").unwrap();
     assert_eq!(classify_file(&empty).unwrap(), EntryKind::Image);
 
-    assert!(matches!(classify_file(&dir.path().join("missing")), Err(Error::Io(_))));
+    assert!(matches!(
+        classify_file(&dir.path().join("missing")),
+        Err(Error::Io(_))
+    ));
 }
 
 // ---------- ordering ----------
@@ -117,7 +136,9 @@ fn natural_ordering_is_case_insensitive_and_numeric_aware() {
 
 #[test]
 fn natural_ordering_is_a_consistent_total_order() {
-    let names = ["a", "A", "a1", "a01", "a10", "a2", "b", "B2", "img2", "img10"];
+    let names = [
+        "a", "A", "a1", "a01", "a10", "a2", "b", "B2", "img2", "img10",
+    ];
     for x in names {
         for y in names {
             assert_eq!(natural_cmp(x, y), natural_cmp(y, x).reverse(), "{x} vs {y}");
@@ -144,7 +165,17 @@ fn listing_puts_directories_first_and_sorts_naturally() {
     let dir = populated_directory();
     let entries = list_directory(dir.path(), false).unwrap();
     let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(names, vec!["A_dir", "b_dir", "img2.png", "img10.png", "notes.txt", "secret.jpg.vvenc"]);
+    assert_eq!(
+        names,
+        vec![
+            "A_dir",
+            "b_dir",
+            "img2.png",
+            "img10.png",
+            "notes.txt",
+            "secret.jpg.vvenc"
+        ]
+    );
 
     let kinds: Vec<EntryKind> = entries.iter().map(|e| e.kind).collect();
     assert_eq!(
@@ -176,7 +207,10 @@ fn hidden_files_are_listed_only_on_request() {
 #[test]
 fn listing_unreadable_locations_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(matches!(list_directory(&dir.path().join("nope"), false), Err(Error::Io(_))));
+    assert!(matches!(
+        list_directory(&dir.path().join("nope"), false),
+        Err(Error::Io(_))
+    ));
     let file = dir.path().join("file.txt");
     fs::write(&file, b"x").unwrap();
     assert!(list_directory(&file, false).is_err());

@@ -79,10 +79,14 @@ impl Seek for MemorySource {
         };
         let new = base + delta;
         if new < 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "seek before the start of the stream"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before the start of the stream",
+            ));
         }
-        self.pos = u64::try_from(new)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "seek position out of range"))?;
+        self.pos = u64::try_from(new).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "seek position out of range")
+        })?;
         Ok(self.pos)
     }
 }
@@ -166,7 +170,11 @@ fn sample_to_image(sample: &gst::Sample) -> Option<ImageData> {
         let start = y.checked_mul(stride)?;
         rgba.extend_from_slice(data.get(start..start.checked_add(row)?)?);
     }
-    Some(ImageData { width: info.width(), height: info.height(), rgba })
+    Some(ImageData {
+        width: info.width(),
+        height: info.height(),
+        rgba,
+    })
 }
 
 /// A running (or paused) video pipeline.
@@ -201,12 +209,17 @@ impl VideoPlayer {
     }
 
     fn create(uri: &str, stream: Option<(Box<dyn MediaSource>, u64)>) -> Result<Self> {
-        let playbin = gst::ElementFactory::make("playbin")
-            .build()
-            .map_err(|e| gst_err("the GStreamer 'playbin' element is unavailable (is GStreamer installed?)", e))?;
+        let playbin = gst::ElementFactory::make("playbin").build().map_err(|e| {
+            gst_err(
+                "the GStreamer 'playbin' element is unavailable (is GStreamer installed?)",
+                e,
+            )
+        })?;
 
         let appsink = gst_app::AppSink::builder().build();
-        let caps = gst::Caps::builder("video/x-raw").field("format", "RGBA").build();
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", "RGBA")
+            .build();
         appsink.set_caps(Some(&caps));
         appsink.set_max_buffers(VIDEO_SINK_MAX_BUFFERS);
         appsink.set_drop(true);
@@ -215,7 +228,8 @@ impl VideoPlayer {
         playbin.set_property("uri", uri);
         playbin.set_property("video-sink", &appsink);
 
-        if let Ok(rotate) = gst::parse::bin_from_description("videoflip video-direction=auto", true) {
+        if let Ok(rotate) = gst::parse::bin_from_description("videoflip video-direction=auto", true)
+        {
             playbin.set_property("video-filter", &rotate);
         }
 
@@ -236,9 +250,9 @@ impl VideoPlayer {
             None => None,
         };
 
-        let bus = playbin
-            .bus()
-            .ok_or_else(|| Error::Unsupported("the video pipeline has no message bus".to_string()))?;
+        let bus = playbin.bus().ok_or_else(|| {
+            Error::Unsupported("the video pipeline has no message bus".to_string())
+        })?;
         let mut player = Self {
             playbin,
             appsink,
@@ -265,7 +279,8 @@ impl VideoPlayer {
         match self.playbin.set_state(gst::State::Playing) {
             Ok(_) => self.playing = true,
             Err(e) => {
-                self.error.get_or_insert_with(|| format!("playback could not start: {e}"));
+                self.error
+                    .get_or_insert_with(|| format!("playback could not start: {e}"));
             }
         }
     }
@@ -303,17 +318,25 @@ impl VideoPlayer {
 
     /// Current position in seconds.
     pub fn position(&self) -> Option<f64> {
-        self.playbin.query_position::<gst::ClockTime>().map(|t| t.seconds_f64())
+        self.playbin
+            .query_position::<gst::ClockTime>()
+            .map(|t| t.seconds_f64())
     }
 
     /// Total duration in seconds, when known.
     pub fn duration(&self) -> Option<f64> {
-        self.playbin.query_duration::<gst::ClockTime>().map(|t| t.seconds_f64())
+        self.playbin
+            .query_duration::<gst::ClockTime>()
+            .map(|t| t.seconds_f64())
     }
 
     /// Seeks to an absolute position (snapping to a nearby key frame).
     pub fn seek_to(&mut self, seconds: f64) {
-        let target = if seconds.is_finite() { seconds.max(0.0) } else { 0.0 };
+        let target = if seconds.is_finite() {
+            seconds.max(0.0)
+        } else {
+            0.0
+        };
         let position = gst::ClockTime::from_nseconds((target * 1_000_000_000.0) as u64);
         if self
             .playbin
@@ -341,7 +364,11 @@ impl VideoPlayer {
 
     /// Sets the volume (clamped to 0.0 to 1.0).
     pub fn set_volume(&mut self, volume: f64) {
-        self.volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 0.0 };
+        self.volume = if volume.is_finite() {
+            volume.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         self.playbin.set_property("volume", self.volume);
     }
 
@@ -393,7 +420,11 @@ impl VideoPlayer {
 
     /// Turns subtitle rendering on or off.
     pub fn set_subtitles_enabled(&mut self, enabled: bool) {
-        let flags = if enabled { "audio+video+text+soft-volume" } else { "audio+video+soft-volume" };
+        let flags = if enabled {
+            "audio+video+text+soft-volume"
+        } else {
+            "audio+video+soft-volume"
+        };
         self.playbin.set_property_from_str("flags", flags);
         self.subtitles_on = enabled;
     }

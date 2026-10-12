@@ -78,9 +78,18 @@ fn trailing_bytes_after_the_header_are_ignored() {
 #[test]
 fn wrong_magic_is_not_encrypted() {
     assert!(matches!(Header::from_bytes(&[]), Err(Error::NotEncrypted)));
-    assert!(matches!(Header::from_bytes(b"short"), Err(Error::NotEncrypted)));
-    assert!(matches!(Header::from_bytes(&with_byte(0, b'X')), Err(Error::NotEncrypted)));
-    assert!(matches!(Header::from_bytes(&vec![0u8; HEADER_LEN]), Err(Error::NotEncrypted)));
+    assert!(matches!(
+        Header::from_bytes(b"short"),
+        Err(Error::NotEncrypted)
+    ));
+    assert!(matches!(
+        Header::from_bytes(&with_byte(0, b'X')),
+        Err(Error::NotEncrypted)
+    ));
+    assert!(matches!(
+        Header::from_bytes(&[0u8; HEADER_LEN]),
+        Err(Error::NotEncrypted)
+    ));
 }
 
 #[test]
@@ -88,7 +97,10 @@ fn bad_magic_takes_precedence_over_a_bad_version() {
     let mut bytes = sample_bytes();
     bytes[0] = 0;
     bytes[8] = 99;
-    assert!(matches!(Header::from_bytes(&bytes), Err(Error::NotEncrypted)));
+    assert!(matches!(
+        Header::from_bytes(&bytes),
+        Err(Error::NotEncrypted)
+    ));
 }
 
 #[test]
@@ -98,7 +110,10 @@ fn truncated_header_with_valid_magic_is_invalid() {
         Header::from_bytes(&bytes[..HEADER_LEN - 1]),
         Err(Error::InvalidHeader(_))
     ));
-    assert!(matches!(Header::from_bytes(&bytes[..MAGIC.len()]), Err(Error::InvalidHeader(_))));
+    assert!(matches!(
+        Header::from_bytes(&bytes[..MAGIC.len()]),
+        Err(Error::InvalidHeader(_))
+    ));
 }
 
 #[test]
@@ -115,39 +130,66 @@ fn unsupported_versions_are_reported_with_their_number() {
 
 #[test]
 fn unknown_algorithm_and_compression_identifiers_are_rejected() {
-    assert!(matches!(Header::from_bytes(&with_byte(10, 9)), Err(Error::InvalidHeader(_))));
-    assert!(matches!(Header::from_bytes(&with_byte(11, 9)), Err(Error::InvalidHeader(_))));
-    assert!(matches!(Header::from_bytes(&with_byte(12, 7)), Err(Error::InvalidHeader(_))));
+    assert!(matches!(
+        Header::from_bytes(&with_byte(10, 9)),
+        Err(Error::InvalidHeader(_))
+    ));
+    assert!(matches!(
+        Header::from_bytes(&with_byte(11, 9)),
+        Err(Error::InvalidHeader(_))
+    ));
+    assert!(matches!(
+        Header::from_bytes(&with_byte(12, 7)),
+        Err(Error::InvalidHeader(_))
+    ));
 }
 
 #[test]
 fn chunk_size_exponent_outside_bounds_is_rejected() {
     let too_small = CHUNK_SIZE_LOG2_MIN - 1;
     let too_large = CHUNK_SIZE_LOG2_MAX + 1;
-    assert!(matches!(Header::from_bytes(&with_byte(13, too_small)), Err(Error::InvalidHeader(_))));
-    assert!(matches!(Header::from_bytes(&with_byte(13, too_large)), Err(Error::InvalidHeader(_))));
+    assert!(matches!(
+        Header::from_bytes(&with_byte(13, too_small)),
+        Err(Error::InvalidHeader(_))
+    ));
+    assert!(matches!(
+        Header::from_bytes(&with_byte(13, too_large)),
+        Err(Error::InvalidHeader(_))
+    ));
     let ok = Header::from_bytes(&with_byte(13, CHUNK_SIZE_LOG2_MIN)).unwrap();
     assert_eq!(ok.chunk_size(), 1usize << CHUNK_SIZE_LOG2_MIN);
 }
 
 #[test]
 fn kdf_parameters_outside_bounds_are_rejected() {
-    assert!(matches!(Header::from_bytes(&with_u32(14, 0)), Err(Error::InvalidKdfParams)));
+    assert!(matches!(
+        Header::from_bytes(&with_u32(14, 0)),
+        Err(Error::InvalidKdfParams)
+    ));
     assert!(matches!(
         Header::from_bytes(&with_u32(14, KDF_MEMORY_KIB_MAX + 1)),
         Err(Error::InvalidKdfParams)
     ));
-    assert!(matches!(Header::from_bytes(&with_u32(18, 0)), Err(Error::InvalidKdfParams)));
+    assert!(matches!(
+        Header::from_bytes(&with_u32(18, 0)),
+        Err(Error::InvalidKdfParams)
+    ));
     assert!(matches!(
         Header::from_bytes(&with_u32(18, KDF_ITERATIONS_MAX + 1)),
         Err(Error::InvalidKdfParams)
     ));
-    assert!(matches!(Header::from_bytes(&with_u32(22, 0)), Err(Error::InvalidKdfParams)));
+    assert!(matches!(
+        Header::from_bytes(&with_u32(22, 0)),
+        Err(Error::InvalidKdfParams)
+    ));
     assert!(matches!(
         Header::from_bytes(&with_u32(22, KDF_PARALLELISM_MAX + 1)),
         Err(Error::InvalidKdfParams)
     ));
-    assert!(matches!(Header::from_bytes(&with_u32(14, u32::MAX)), Err(Error::InvalidKdfParams)));
+    assert!(matches!(
+        Header::from_bytes(&with_u32(14, u32::MAX)),
+        Err(Error::InvalidKdfParams)
+    ));
 }
 
 #[test]
@@ -158,7 +200,10 @@ fn default_kdf_params_match_constants_and_validate() {
     assert_eq!(d.parallelism, KDF_PARALLELISM_DEFAULT);
     assert!(d.validate().is_ok());
     assert!(fast_kdf().validate().is_ok());
-    let bad = KdfParams { memory_kib: 0, ..fast_kdf() };
+    let bad = KdfParams {
+        memory_kib: 0,
+        ..fast_kdf()
+    };
     assert!(matches!(bad.validate(), Err(Error::InvalidKdfParams)));
 }
 
@@ -213,10 +258,16 @@ fn read_header_parses_streams_and_reports_errors() {
     assert_eq!(read_header(&mut ok).unwrap(), sample_header());
 
     let mut not_ours = Cursor::new(b"just some text, not an encrypted file at all".to_vec());
-    assert!(matches!(read_header(&mut not_ours), Err(Error::NotEncrypted)));
+    assert!(matches!(
+        read_header(&mut not_ours),
+        Err(Error::NotEncrypted)
+    ));
 
     let mut short = Cursor::new(sample_bytes()[..HEADER_LEN - 10].to_vec());
-    assert!(matches!(read_header(&mut short), Err(Error::InvalidHeader(_))));
+    assert!(matches!(
+        read_header(&mut short),
+        Err(Error::InvalidHeader(_))
+    ));
 
     let mut empty = Cursor::new(Vec::new());
     assert!(matches!(read_header(&mut empty), Err(Error::NotEncrypted)));
@@ -248,8 +299,14 @@ fn payload_length_is_derived_from_the_file_length() {
     assert_eq!(payload_len(h + t, cs).unwrap(), 0);
     assert_eq!(payload_len(h + t + 100, cs).unwrap(), 100);
     assert_eq!(payload_len(h + stride, cs).unwrap(), CHUNK_SIZE as u64);
-    assert_eq!(payload_len(h + stride + t + 10, cs).unwrap(), CHUNK_SIZE as u64 + 10);
-    assert_eq!(payload_len(h + 3 * stride, cs).unwrap(), 3 * CHUNK_SIZE as u64);
+    assert_eq!(
+        payload_len(h + stride + t + 10, cs).unwrap(),
+        CHUNK_SIZE as u64 + 10
+    );
+    assert_eq!(
+        payload_len(h + 3 * stride, cs).unwrap(),
+        3 * CHUNK_SIZE as u64
+    );
 }
 
 #[test]
@@ -263,5 +320,8 @@ fn impossible_file_lengths_are_corrupted() {
     assert!(matches!(payload_len(h - 1, cs), Err(Error::Corrupted)));
     assert!(matches!(payload_len(h, cs), Err(Error::Corrupted)));
     assert!(matches!(payload_len(h + t - 1, cs), Err(Error::Corrupted)));
-    assert!(matches!(payload_len(h + stride + 3, cs), Err(Error::Corrupted)));
+    assert!(matches!(
+        payload_len(h + stride + 3, cs),
+        Err(Error::Corrupted)
+    ));
 }

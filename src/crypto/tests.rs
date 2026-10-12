@@ -18,7 +18,10 @@ fn fast_kdf() -> KdfParams {
 }
 
 fn opts(compress: bool) -> EncryptOptions {
-    EncryptOptions { kdf: fast_kdf(), compress }
+    EncryptOptions {
+        kdf: fast_kdf(),
+        compress,
+    }
 }
 
 fn pattern(len: usize) -> Vec<u8> {
@@ -83,7 +86,10 @@ fn kek_derivation_is_deterministic_and_input_sensitive() {
     let other_salt = derive_kek(PW, &[8u8; SALT_LEN], &fast_kdf()).unwrap();
     assert_ne!(*a, *other_salt);
 
-    let other_params = KdfParams { iterations: 2, ..fast_kdf() };
+    let other_params = KdfParams {
+        iterations: 2,
+        ..fast_kdf()
+    };
     let changed = derive_kek(PW, &salt, &other_params).unwrap();
     assert_ne!(*a, *changed);
 }
@@ -91,9 +97,18 @@ fn kek_derivation_is_deterministic_and_input_sensitive() {
 #[test]
 fn kek_derivation_rejects_empty_password_and_invalid_params() {
     let salt = [9u8; SALT_LEN];
-    assert!(matches!(derive_kek("", &salt, &fast_kdf()), Err(Error::EmptyPassword)));
-    let bad = KdfParams { memory_kib: 0, ..fast_kdf() };
-    assert!(matches!(derive_kek(PW, &salt, &bad), Err(Error::InvalidKdfParams)));
+    assert!(matches!(
+        derive_kek("", &salt, &fast_kdf()),
+        Err(Error::EmptyPassword)
+    ));
+    let bad = KdfParams {
+        memory_kib: 0,
+        ..fast_kdf()
+    };
+    assert!(matches!(
+        derive_kek(PW, &salt, &bad),
+        Err(Error::InvalidKdfParams)
+    ));
 }
 
 #[test]
@@ -110,8 +125,14 @@ fn file_key_wrapping_round_trips_and_authenticates() {
     assert_eq!(*unwrapped, key);
 
     let wrong_kek = [8u8; KEY_LEN];
-    assert!(matches!(unwrap_file_key(&wrong_kek, &nonce, b"aad", &wrapped), Err(Error::WrongPassword)));
-    assert!(matches!(unwrap_file_key(&kek, &nonce, b"other", &wrapped), Err(Error::WrongPassword)));
+    assert!(matches!(
+        unwrap_file_key(&wrong_kek, &nonce, b"aad", &wrapped),
+        Err(Error::WrongPassword)
+    ));
+    assert!(matches!(
+        unwrap_file_key(&kek, &nonce, b"other", &wrapped),
+        Err(Error::WrongPassword)
+    ));
     assert!(matches!(
         unwrap_file_key(&kek, &[1u8; NONCE_LEN], b"aad", &wrapped),
         Err(Error::WrongPassword)
@@ -119,7 +140,10 @@ fn file_key_wrapping_round_trips_and_authenticates() {
 
     let mut tampered = wrapped;
     tampered[3] ^= 1;
-    assert!(matches!(unwrap_file_key(&kek, &nonce, b"aad", &tampered), Err(Error::WrongPassword)));
+    assert!(matches!(
+        unwrap_file_key(&kek, &nonce, b"aad", &tampered),
+        Err(Error::WrongPassword)
+    ));
 }
 
 #[test]
@@ -127,24 +151,43 @@ fn chunk_nonce_encodes_prefix_index_and_final_flag() {
     let prefix = [0xABu8; NONCE_PREFIX_LEN];
     let n = chunk_nonce(&prefix, 0x0102_0304_0506_0708, true);
     assert_eq!(&n[..NONCE_PREFIX_LEN], &prefix);
-    assert_eq!(&n[NONCE_PREFIX_LEN..NONCE_PREFIX_LEN + 8], &0x0102_0304_0506_0708u64.to_be_bytes());
+    assert_eq!(
+        &n[NONCE_PREFIX_LEN..NONCE_PREFIX_LEN + 8],
+        &0x0102_0304_0506_0708u64.to_be_bytes()
+    );
     assert_eq!(n[NONCE_LEN - 1], 1);
 
     let not_last = chunk_nonce(&prefix, 0x0102_0304_0506_0708, false);
     assert_eq!(not_last[NONCE_LEN - 1], 0);
     assert_ne!(n, not_last);
-    assert_ne!(chunk_nonce(&prefix, 1, false), chunk_nonce(&prefix, 2, false));
+    assert_ne!(
+        chunk_nonce(&prefix, 1, false),
+        chunk_nonce(&prefix, 2, false)
+    );
 }
 
 // ---------- round trips ----------
 
 #[test]
 fn round_trips_across_chunk_boundaries() {
-    for n in [0usize, 1, 100, CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 1, 2 * CHUNK_SIZE, 2 * CHUNK_SIZE + 17] {
+    for n in [
+        0usize,
+        1,
+        100,
+        CHUNK_SIZE - 1,
+        CHUNK_SIZE,
+        CHUNK_SIZE + 1,
+        2 * CHUNK_SIZE,
+        2 * CHUNK_SIZE + 17,
+    ] {
         let data = pattern(n);
         let ct = encrypt(&data, false);
         let chunks = if n == 0 { 1 } else { n.div_ceil(CHUNK_SIZE) };
-        assert_eq!(ct.len(), HEADER_LEN + n + chunks * TAG_LEN, "ciphertext size for {n}");
+        assert_eq!(
+            ct.len(),
+            HEADER_LEN + n + chunks * TAG_LEN,
+            "ciphertext size for {n}"
+        );
         assert_eq!(decrypt(&ct, PW).unwrap(), data, "round trip for {n}");
     }
 }
@@ -166,7 +209,10 @@ fn unicode_passwords_work() {
     let mut ct = Vec::new();
     encrypt_stream(&mut Cursor::new(&data), &mut ct, password, &opts(false)).unwrap();
     assert_eq!(decrypt(&ct, password).unwrap(), data);
-    assert!(matches!(decrypt(&ct, "passwörd-日本語-🔑"), Err(Error::WrongPassword)));
+    assert!(matches!(
+        decrypt(&ct, "passwörd-日本語-🔑"),
+        Err(Error::WrongPassword)
+    ));
 }
 
 #[test]
@@ -215,13 +261,25 @@ fn two_encryptions_of_the_same_input_differ_in_salt_key_and_nonce() {
 fn short_reads_from_the_source_do_not_change_the_result() {
     let data = pattern(70_000);
     let mut ct = Vec::new();
-    encrypt_stream(&mut OneByteReader(Cursor::new(&data)), &mut ct, PW, &opts(false)).unwrap();
+    encrypt_stream(
+        &mut OneByteReader(Cursor::new(&data)),
+        &mut ct,
+        PW,
+        &opts(false),
+    )
+    .unwrap();
     assert_eq!(ct.len(), HEADER_LEN + 70_000 + 2 * TAG_LEN);
     assert_eq!(decrypt(&ct, PW).unwrap(), data);
 
     let text = vec![b'z'; 100_000];
     let mut ct2 = Vec::new();
-    encrypt_stream(&mut OneByteReader(Cursor::new(&text)), &mut ct2, PW, &opts(true)).unwrap();
+    encrypt_stream(
+        &mut OneByteReader(Cursor::new(&text)),
+        &mut ct2,
+        PW,
+        &opts(true),
+    )
+    .unwrap();
     assert_eq!(decrypt(&ct2, PW).unwrap(), text);
 }
 
@@ -237,7 +295,12 @@ fn source_read_errors_are_propagated() {
 #[test]
 fn empty_password_is_rejected_for_encryption_and_decryption() {
     let mut out = Vec::new();
-    let result = encrypt_stream(&mut Cursor::new(b"data".as_slice()), &mut out, "", &opts(false));
+    let result = encrypt_stream(
+        &mut Cursor::new(b"data".as_slice()),
+        &mut out,
+        "",
+        &opts(false),
+    );
     assert!(matches!(result, Err(Error::EmptyPassword)));
 
     let ct = encrypt(b"data", false);
@@ -248,7 +311,10 @@ fn empty_password_is_rejected_for_encryption_and_decryption() {
 fn wrong_password_is_rejected() {
     let ct = encrypt(&pattern(2000), false);
     assert!(matches!(decrypt(&ct, OTHER_PW), Err(Error::WrongPassword)));
-    assert!(matches!(Decryptor::open(Cursor::new(ct), OTHER_PW), Err(Error::WrongPassword)));
+    assert!(matches!(
+        Decryptor::open(Cursor::new(ct), OTHER_PW),
+        Err(Error::WrongPassword)
+    ));
 }
 
 // ---------- tampering and corruption ----------
@@ -256,16 +322,28 @@ fn wrong_password_is_rejected() {
 #[test]
 fn magic_and_version_tampering_is_reported_precisely() {
     let ct = encrypt(&pattern(1000), false);
-    assert!(matches!(decrypt(&flipped(&ct, 0), PW), Err(Error::NotEncrypted)));
+    assert!(matches!(
+        decrypt(&flipped(&ct, 0), PW),
+        Err(Error::NotEncrypted)
+    ));
     let mut future = ct.clone();
     future[8] = 2;
-    assert!(matches!(decrypt(&future, PW), Err(Error::UnsupportedVersion(2))));
+    assert!(matches!(
+        decrypt(&future, PW),
+        Err(Error::UnsupportedVersion(2))
+    ));
     let mut bad_kdf_id = ct.clone();
     bad_kdf_id[10] = 9;
-    assert!(matches!(decrypt(&bad_kdf_id, PW), Err(Error::InvalidHeader(_))));
+    assert!(matches!(
+        decrypt(&bad_kdf_id, PW),
+        Err(Error::InvalidHeader(_))
+    ));
     let mut bad_aead_id = ct.clone();
     bad_aead_id[11] = 9;
-    assert!(matches!(decrypt(&bad_aead_id, PW), Err(Error::InvalidHeader(_))));
+    assert!(matches!(
+        decrypt(&bad_aead_id, PW),
+        Err(Error::InvalidHeader(_))
+    ));
 }
 
 #[test]
@@ -273,11 +351,17 @@ fn out_of_range_kdf_parameters_are_rejected_before_deriving() {
     let ct = encrypt(&pattern(1000), false);
     let mut zero_iterations = ct.clone();
     zero_iterations[18..22].copy_from_slice(&0u32.to_le_bytes());
-    assert!(matches!(decrypt(&zero_iterations, PW), Err(Error::InvalidKdfParams)));
+    assert!(matches!(
+        decrypt(&zero_iterations, PW),
+        Err(Error::InvalidKdfParams)
+    ));
 
     let mut huge_memory = ct.clone();
     huge_memory[14..18].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(matches!(decrypt(&huge_memory, PW), Err(Error::InvalidKdfParams)));
+    assert!(matches!(
+        decrypt(&huge_memory, PW),
+        Err(Error::InvalidKdfParams)
+    ));
 }
 
 #[test]
@@ -297,7 +381,10 @@ fn authenticated_header_fields_reject_modification() {
 fn nonce_prefix_tampering_is_detected_as_corruption() {
     let ct = encrypt(&pattern(1000), false);
     for index in [114usize, 120, 128] {
-        assert!(matches!(decrypt(&flipped(&ct, index), PW), Err(Error::Corrupted)), "byte {index}");
+        assert!(
+            matches!(decrypt(&flipped(&ct, index), PW), Err(Error::Corrupted)),
+            "byte {index}"
+        );
     }
 }
 
@@ -313,7 +400,10 @@ fn ciphertext_and_tag_tampering_is_detected() {
         ct.len() - 1,
     ];
     for index in indices {
-        assert!(matches!(decrypt(&flipped(&ct, index), PW), Err(Error::Corrupted)), "byte {index}");
+        assert!(
+            matches!(decrypt(&flipped(&ct, index), PW), Err(Error::Corrupted)),
+            "byte {index}"
+        );
     }
 }
 
@@ -323,11 +413,26 @@ fn truncation_is_detected_even_at_chunk_boundaries() {
     let ct = encrypt(&data, false);
     let last_chunk = 500 + TAG_LEN;
 
-    assert!(matches!(decrypt(&ct[..ct.len() - last_chunk], PW), Err(Error::Corrupted)));
-    assert!(matches!(decrypt(&ct[..ct.len() - 1], PW), Err(Error::Corrupted)));
-    assert!(matches!(decrypt(&ct[..HEADER_LEN + TAG_LEN], PW), Err(Error::Corrupted)));
-    assert!(matches!(decrypt(&ct[..HEADER_LEN], PW), Err(Error::Corrupted)));
-    assert!(matches!(decrypt(&ct[..HEADER_LEN - 1], PW), Err(Error::InvalidHeader(_))));
+    assert!(matches!(
+        decrypt(&ct[..ct.len() - last_chunk], PW),
+        Err(Error::Corrupted)
+    ));
+    assert!(matches!(
+        decrypt(&ct[..ct.len() - 1], PW),
+        Err(Error::Corrupted)
+    ));
+    assert!(matches!(
+        decrypt(&ct[..HEADER_LEN + TAG_LEN], PW),
+        Err(Error::Corrupted)
+    ));
+    assert!(matches!(
+        decrypt(&ct[..HEADER_LEN], PW),
+        Err(Error::Corrupted)
+    ));
+    assert!(matches!(
+        decrypt(&ct[..HEADER_LEN - 1], PW),
+        Err(Error::InvalidHeader(_))
+    ));
     assert!(matches!(decrypt(&ct[..5], PW), Err(Error::NotEncrypted)));
 }
 
@@ -341,8 +446,11 @@ fn appended_data_is_detected() {
     let exact = encrypt(&pattern(2 * CHUNK_SIZE), false);
     for extra in [3usize, 20, 1000] {
         let mut bigger = exact.clone();
-        bigger.extend(std::iter::repeat(0xEE).take(extra));
-        assert!(matches!(decrypt(&bigger, PW), Err(Error::Corrupted)), "extra {extra}");
+        bigger.extend(std::iter::repeat_n(0xEE, extra));
+        assert!(
+            matches!(decrypt(&bigger, PW), Err(Error::Corrupted)),
+            "extra {extra}"
+        );
     }
 }
 
@@ -398,7 +506,10 @@ fn compressible_data_is_compressed_and_round_trips() {
     assert_eq!(stats.plaintext_len, 300_000);
     assert!(stats.stored_len < 10_000);
     assert!(ct.len() < 100_000);
-    assert_eq!(Header::from_bytes(&ct).unwrap().compression, COMPRESSION_DEFLATE);
+    assert_eq!(
+        Header::from_bytes(&ct).unwrap().compression,
+        COMPRESSION_DEFLATE
+    );
     assert_eq!(decrypt(&ct, PW).unwrap(), data);
 }
 
@@ -406,22 +517,37 @@ fn compressible_data_is_compressed_and_round_trips() {
 fn compression_is_skipped_when_disabled_or_not_beneficial() {
     let compressible = vec![b'a'; 300_000];
     let off = encrypt(&compressible, false);
-    assert_eq!(Header::from_bytes(&off).unwrap().compression, COMPRESSION_NONE);
+    assert_eq!(
+        Header::from_bytes(&off).unwrap().compression,
+        COMPRESSION_NONE
+    );
 
     let random = pattern(100_000);
     let skipped = encrypt(&random, true);
-    assert_eq!(Header::from_bytes(&skipped).unwrap().compression, COMPRESSION_NONE);
+    assert_eq!(
+        Header::from_bytes(&skipped).unwrap().compression,
+        COMPRESSION_NONE
+    );
     assert_eq!(skipped.len(), HEADER_LEN + 100_000 + 2 * TAG_LEN);
 
     let empty = encrypt(&[], true);
-    assert_eq!(Header::from_bytes(&empty).unwrap().compression, COMPRESSION_NONE);
+    assert_eq!(
+        Header::from_bytes(&empty).unwrap().compression,
+        COMPRESSION_NONE
+    );
 }
 
 #[test]
 fn compressed_files_detect_tampering() {
     let ct = encrypt(&vec![b'a'; 200_000], true);
-    assert!(matches!(decrypt(&flipped(&ct, HEADER_LEN + 3), PW), Err(Error::Corrupted)));
-    assert!(matches!(decrypt(&ct[..ct.len() - 1], PW), Err(Error::Corrupted)));
+    assert!(matches!(
+        decrypt(&flipped(&ct, HEADER_LEN + 3), PW),
+        Err(Error::Corrupted)
+    ));
+    assert!(matches!(
+        decrypt(&ct[..ct.len() - 1], PW),
+        Err(Error::Corrupted)
+    ));
 }
 
 // ---------- Decryptor ----------
@@ -454,7 +580,10 @@ fn decryptor_supports_random_access_over_the_payload() {
     assert_eq!(dec.stream_position().unwrap(), 100 + 2 * CHUNK_SIZE as u64);
     let mut mid = [0u8; 16];
     dec.read_exact(&mut mid).unwrap();
-    assert_eq!(&mid[..], &data[100 + 2 * CHUNK_SIZE..100 + 2 * CHUNK_SIZE + 16]);
+    assert_eq!(
+        &mid[..],
+        &data[100 + 2 * CHUNK_SIZE..100 + 2 * CHUNK_SIZE + 16]
+    );
 
     dec.seek(SeekFrom::Start(0)).unwrap();
     let mut all = Vec::new();
@@ -481,7 +610,10 @@ fn empty_payload_is_authenticated_on_first_read() {
 
     let tampered = flipped(&ct, ct.len() - 1);
     let mut bad = Decryptor::open(Cursor::new(tampered), PW).unwrap();
-    assert_eq!(bad.read(&mut buf).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(
+        bad.read(&mut buf).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidData
+    );
 }
 
 #[test]
@@ -501,7 +633,10 @@ fn read_plaintext_handles_compressed_and_plain_payloads() {
 
     // read_plaintext always starts from the beginning, even after other reads
     dec2.seek(SeekFrom::Start(500)).unwrap();
-    assert_eq!(dec2.read_plaintext(1 << 20).unwrap().as_slice(), random.as_slice());
+    assert_eq!(
+        dec2.read_plaintext(1 << 20).unwrap().as_slice(),
+        random.as_slice()
+    );
 }
 
 #[test]
@@ -510,14 +645,20 @@ fn read_plaintext_enforces_the_size_limit() {
     let ct = encrypt(&data, false);
 
     let mut under = Decryptor::open(Cursor::new(ct.clone()), PW).unwrap();
-    assert!(matches!(under.read_plaintext(5_000), Err(Error::TooLarge { limit: 5_000 })));
+    assert!(matches!(
+        under.read_plaintext(5_000),
+        Err(Error::TooLarge { limit: 5_000 })
+    ));
 
     let mut exact = Decryptor::open(Cursor::new(ct), PW).unwrap();
     assert_eq!(exact.read_plaintext(10_000).unwrap().len(), 10_000);
 
     let bomb = encrypt(&vec![0u8; 2_000_000], true);
     let mut dec = Decryptor::open(Cursor::new(bomb), PW).unwrap();
-    assert!(matches!(dec.read_plaintext(1_000), Err(Error::TooLarge { limit: 1_000 })));
+    assert!(matches!(
+        dec.read_plaintext(1_000),
+        Err(Error::TooLarge { limit: 1_000 })
+    ));
 }
 
 #[test]
@@ -530,5 +671,8 @@ fn read_plaintext_reports_corruption() {
     let plain = encrypt(&pattern(CHUNK_SIZE + 5), false);
     let tampered_plain = flipped(&plain, HEADER_LEN + 10);
     let mut dec2 = Decryptor::open(Cursor::new(tampered_plain), PW).unwrap();
-    assert!(matches!(dec2.read_plaintext(1 << 20), Err(Error::Corrupted)));
+    assert!(matches!(
+        dec2.read_plaintext(1 << 20),
+        Err(Error::Corrupted)
+    ));
 }
