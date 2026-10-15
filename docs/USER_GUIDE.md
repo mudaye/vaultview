@@ -178,7 +178,7 @@ Images are decrypted into memory and shown. Videos are decrypted in small pieces
 - A video that was stored compressed inside its encrypted file cannot be streamed; it is decrypted completely into memory first (same 256 MiB limit). Videos encrypted by this version are normally not stored compressed.
 - Passwords are case-sensitive and compared exactly as typed. A different keyboard layout or input method can produce different characters.
 
-**There is currently no "decrypt to file" feature.** VaultView can show encrypted media but cannot write a permanent decrypted copy back to disk. The encrypted-file format is documented in `docs/FORMAT.md` for anyone who needs to build a decryption tool, but a lost password still means lost data.
+**VaultView does not decrypt files back to disk.** It shows encrypted media but never writes a permanent decrypted copy. The encrypted-file format is documented in `docs/FORMAT.md` for anyone who needs to build a separate decryption tool, but a lost password still means lost data.
 
 ## 9. Password management
 

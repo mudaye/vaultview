@@ -154,7 +154,7 @@ Not covered by unit tests: `video.rs` (needs a GStreamer runtime) and `app.rs` (
 - Hidden-file detection uses the dot prefix and, on Windows, the hidden attribute.
 - No thumbnails or previews are generated (deliberately, to avoid persisting content).
 - The application does not edit media and is not a general file manager.
-- There is no "decrypt to file" function yet: encrypted files can be viewed but not written back to disk as plain files.
+- Decrypting to a plain file is not provided: encrypted files can be viewed (decrypted in memory only) but not written back to disk. This is a design decision, not a defect.
 
 ## Dependencies and licenses
 
