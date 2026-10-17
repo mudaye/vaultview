@@ -6,7 +6,9 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::constants::{IMAGE_EXTENSIONS, SNIFF_LEN, VIDEO_EXTENSIONS};
+use crate::constants::{
+    AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSION, SNIFF_LEN, VIDEO_EXTENSIONS,
+};
 use crate::error::Result;
 use crate::format::is_encrypted_prefix;
 
@@ -19,6 +21,10 @@ pub enum EntryKind {
     Image,
     /// A recognised video.
     Video,
+    /// A recognised audio file.
+    Audio,
+    /// A PDF document.
+    Pdf,
     /// A file in the application's encrypted format.
     Encrypted,
     /// Anything else.
@@ -55,12 +61,16 @@ pub fn classify_bytes(prefix: &[u8], extension: Option<&str>) -> EntryKind {
         return match detected.matcher_type() {
             infer::MatcherType::Image => EntryKind::Image,
             infer::MatcherType::Video => EntryKind::Video,
+            infer::MatcherType::Audio => EntryKind::Audio,
+            _ if detected.mime_type() == "application/pdf" => EntryKind::Pdf,
             _ => EntryKind::Other,
         };
     }
     match extension.map(str::to_ascii_lowercase) {
         Some(ext) if IMAGE_EXTENSIONS.contains(&ext.as_str()) => EntryKind::Image,
         Some(ext) if VIDEO_EXTENSIONS.contains(&ext.as_str()) => EntryKind::Video,
+        Some(ext) if AUDIO_EXTENSIONS.contains(&ext.as_str()) => EntryKind::Audio,
+        Some(ext) if ext == PDF_EXTENSION => EntryKind::Pdf,
         _ => EntryKind::Other,
     }
 }
@@ -182,14 +192,19 @@ pub struct NavContext {
 }
 
 impl NavContext {
-    /// Builds a context from a listing: images, videos and encrypted files participate.
+    /// Builds a context from a listing: images, videos, audio files, PDFs and
+    /// encrypted files participate.
     pub fn from_entries(entries: &[Entry]) -> Self {
         let items = entries
             .iter()
             .filter(|e| {
                 matches!(
                     e.kind,
-                    EntryKind::Image | EntryKind::Video | EntryKind::Encrypted
+                    EntryKind::Image
+                        | EntryKind::Video
+                        | EntryKind::Audio
+                        | EntryKind::Pdf
+                        | EntryKind::Encrypted
                 )
             })
             .map(|e| e.path.clone())

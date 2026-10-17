@@ -10,12 +10,14 @@ VaultView views images and videos from your own folders and can encrypt files wi
   - [2. Browsing files](#2-browsing-files)
   - [3. Moving between files](#3-moving-between-files)
   - [4. Viewing images and zooming](#4-viewing-images-and-zooming)
-  - [5. Playing videos](#5-playing-videos)
+  - [4a. Viewing PDF files](#4a-viewing-pdf-files)
+  - [5. Playing videos and audio](#5-playing-videos-and-audio)
   - [6. Favorites](#6-favorites)
   - [7. Encrypting files (batches)](#7-encrypting-files-batches)
   - [8. Opening encrypted files](#8-opening-encrypted-files)
   - [9. Password management](#9-password-management)
   - [10. Cache controls and closing media](#10-cache-controls-and-closing-media)
+  - [10a. Boss key (Esc)](#10a-boss-key-esc)
   - [11. Normal deletion](#11-normal-deletion)
   - [12. Deep deletion](#12-deep-deletion)
   - [Security limitations](#security-limitations)
@@ -31,7 +33,7 @@ VaultView views images and videos from your own folders and can encrypt files wi
 - **Center:** the viewer for the open image or video.
 - **Bottom bar:** the open file's name, size in pixels, zoom level, position in the folder (for example `(3/12)`), a note when the file is encrypted, and short status messages that disappear after a few seconds.
 
-In full screen (see sections 4 and 5) the top bar, left panel and bottom bar are hidden and only the viewer is shown.
+In **theater mode** (section 4) the top bar, left panel and bottom bar are hidden and only the viewing pane is shown.
 
 ## 2. Browsing files
 
@@ -46,6 +48,8 @@ In full screen (see sections 4 and 5) the top bar, left panel and bottom bar are
 | 🎬 | Video |
 | 🔒 | File encrypted by VaultView (shown in gold) |
 | 📄 | Anything else |
+| 🎵 | Audio file |
+| 📕 | PDF document |
 
 VaultView identifies files by looking at their contents, not only their extension, so a photo with the wrong extension still shows as an image. Encrypted files are recognized by their internal signature, so a renamed encrypted file is still marked 🔒.
 
@@ -59,7 +63,7 @@ The selection decides what *Encrypt…*, *Delete…* and *Deep delete…* act on
 
 ## 3. Moving between files
 
-Press the **Left** and **Right** arrow keys, or click ◀ and ▶. They move through the images, videos and encrypted files of the current folder, in the same order as the list, skipping everything else.
+Press the **Left** and **Right** arrow keys, or click ◀ and ▶. They move through the images, videos, audio files, PDFs and encrypted files of the current folder, in the same order as the list, skipping everything else.
 
 - At the first or last file a message tells you there is nothing further.
 - If you start with no file open, Right opens the first viewable file and Left opens the last.
@@ -87,7 +91,28 @@ When you open an image it starts in *Fit window*. Panning only works when the zo
 
 **Large images.** Images wider or taller than 8192 pixels are shrunk for display and the bottom bar says so; zooming in will not reveal more detail than the shrunken copy. Images with more than 200 million pixels are refused with an error message.
 
-## 5. Playing videos
+## 4a. Viewing PDF files
+
+Click a 📕 file. The first page appears fitted to the window.
+
+| Action | Control |
+|---|---|
+| Next / previous page | ▶ / ◀ under the page, `Page Down` / `Page Up` |
+| First / last page | |◀ / ▶| under the page, `Home` / `End` |
+| Go to a page | Type or drag the page number box |
+| Zoom, 100%, fit, reset, pan | Same buttons, keys and mouse actions as images (section 4) |
+
+"100%" shows the page at its nominal size (72 points per inch). Pages are drawn by a built-in renderer on a background thread, so the window stays responsive; a page may appear a moment after you move to it, and sharpens a moment after you zoom.
+
+If something cannot be shown you get a message instead of a crash:
+
+- *Could not be opened*: the file is damaged, protected by its own password (not supported), or uses features the renderer cannot read.
+- *This page could not be displayed*: only that page failed; other pages still work.
+- *Some content on this page may not display correctly*: the page was drawn but part of it (for example certain image types or fonts) was skipped.
+
+PDFs have no text selection, search, links, annotations or form filling. At very high zoom a large page is drawn at reduced resolution and looks soft. Encrypted PDFs are decrypted in memory only. Files over 256 MiB are refused.
+
+## 5. Playing videos and audio
 
 Video playback requires GStreamer on your computer. Which formats, audio tracks, subtitles and special features (such as HDR) work depends on the GStreamer plugins installed. If a video does not play, the viewer shows an error. Builds made without video support say so when you click a video.
 
@@ -109,6 +134,8 @@ Video playback requires GStreamer on your computer. Which formats, audio tracks,
 - Seeking jumps to a nearby key frame, so it may land slightly before or after the exact spot you chose.
 - Videos start playing as soon as they open.
 - Opening another file, or closing the media, stops the video and releases its resources.
+
+**Audio files** (🎵) play with the same controls: play/pause, seek bar, volume, mute and the same keys. Instead of a picture the viewer shows the embedded cover art, if the file has one, and the title, artist, album, genre, codec and bit rate that the file provides (the title falls back to the file name). Which formats play depends on your GStreamer plugins; MP3, AAC/M4A, FLAC, Ogg, Opus and WAV are normally available. Tags can appear a moment after playback starts. Encrypted audio is streamed from memory like encrypted video. An audio-only MKV or MP4 may be marked as video in the list and switches to this layout once it has been analysed.
 
 ## 6. Favorites
 
@@ -202,6 +229,17 @@ Decrypted *images* are kept in an in-memory cache (up to 256 MiB in total) so go
 
 **Be aware:** an image that is still in the cache opens again without asking for a password, even after *Forget password*. If you want a file to require its password again, use **Lock all** (or *Clear decrypted cache* together with *Forget password*).
 
+## 10a. Boss key (Esc)
+
+Press **Esc** to hide everything quickly. It works in normal and theater mode, anywhere in the main window, even while you are typing in a text box or a dialog is open. It:
+
+1. runs **Lock all** (closes the media and stops audio and video, forgets all passwords, clears the decrypted cache),
+2. closes open dialogs, so a half-typed password is discarded,
+3. leaves theater mode if it is active, and
+4. minimizes the window after a couple of frames, so the cleared viewer is what the operating system captures for the taskbar thumbnail.
+
+When you restore the window the viewer is empty and passwords are needed again. The boss key only works while the application window has the keyboard focus; there is no system-wide shortcut. A running encryption or deletion carries on in the background and its result dialog appears when you restore the window. Because Esc is the boss key, pressing it to cancel something also locks everything.
+
 ## 11. Normal deletion
 
 1. Tick the files to delete. **If you have ticked files, only those are deleted, not the file you have open.** If nothing is ticked, the open file is deleted.
@@ -245,6 +283,8 @@ Please understand these before relying on VaultView for sensitive data.
 
 **No independent review.** The encryption design uses well-known algorithms (XChaCha20-Poly1305 and Argon2id), but this implementation has not been independently audited.
 
+**PDFs and the boss key.** An encrypted PDF is decrypted into memory and passed to the PDF library, which keeps its own copy of the bytes; this application cannot wipe that copy. The boss key clears the viewer and waits a couple of frames before minimizing, but the operating system decides what it keeps in window thumbnails, previews and animations, and it only works while the application window has focus.
+
 ## Troubleshooting
 
 **An encryption result says UNCERTAIN.** Something failed after VaultView started overwriting the original. A complete, verified encrypted copy was kept as a hidden file named `.<name>.vvtmp` next to the original (turn on *Hidden* in the Files tab to see it); the message gives its name. Suggested recovery (reasoned, not tested):
@@ -268,6 +308,14 @@ Please understand these before relying on VaultView for sensitive data.
 
 **Something else went wrong.** The message in the viewer or in the result report names the affected file and the reason. It is safe to retry: operations never overwrite existing files silently, and failed decryption never modifies the encrypted file.
 
+**A PDF will not open.** It may be damaged or protected by its own password (not supported). The message in the viewer says which. Open it in another viewer to check.
+
+**A PDF page looks incomplete.** The renderer skipped content it does not support; the notice under the page says so. Try another viewer for that document.
+
+**An audio file does not play.** Install the GStreamer "good", "bad", "ugly" and "libav" plugin sets (see the README) and restart. Audio is not available in a build made without the `video` feature.
+
+**Esc locked everything when I only wanted to cancel.** Esc is always the boss key. Use the buttons (Cancel, the dialog buttons) to cancel things, and `F`, `F11` or the overlay's *Exit theater* button to leave theater mode.
+
 ## 13. Keyboard and mouse reference
 
 Keyboard shortcuts work when no text box has the focus and no dialog is open.
@@ -280,12 +328,14 @@ Keyboard shortcuts work when no text box has the focus and no dialog is open.
 | `2` | Fit image (no enlarging) |
 | `0` | Reset zoom and position (fit to window) |
 | `W` `A` `S` `D` | Pan a zoomed image |
-| `F` or `F11` | Toggle full screen |
-| `Esc` | Leave full screen |
-| `Space` or `K` | Video: play / pause |
-| `J` / `L` | Video: back / forward 5 seconds |
-| `Up` / `Down` | Video: volume up / down |
-| `M` | Video: mute |
+| `F` or `F11` | Toggle theater mode |
+| `Esc` | Boss key: Lock all, close dialogs, leave theater mode, minimize |
+| `Page Up` / `Page Down` | PDF: previous / next page |
+| `Home` / `End` | PDF: first / last page |
+| `Space` or `K` | Video and audio: play / pause |
+| `J` / `L` | Video and audio: back / forward 5 seconds |
+| `Up` / `Down` | Video and audio: volume up / down |
+| `M` | Video and audio: mute |
 
 | Mouse | Action |
 |---|---|

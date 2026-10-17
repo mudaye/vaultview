@@ -378,3 +378,98 @@ fn only_unencrypted_files_are_offered_for_encryption_in_listing_order() {
         ]
     );
 }
+
+// ---------- audio and PDF ----------
+
+fn pdf_bytes() -> Vec<u8> {
+    let mut v = b"%PDF-1.7\n".to_vec();
+    v.extend_from_slice(&[0u8; 32]);
+    v
+}
+
+fn mp3_bytes() -> Vec<u8> {
+    let mut v = b"ID3\x03\x00\x00\x00\x00\x00\x00".to_vec();
+    v.extend_from_slice(&[0u8; 32]);
+    v
+}
+
+fn flac_bytes() -> Vec<u8> {
+    let mut v = b"fLaC".to_vec();
+    v.extend_from_slice(&[0u8; 32]);
+    v
+}
+
+fn wav_bytes() -> Vec<u8> {
+    let mut v = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+    v.extend_from_slice(&[0u8; 32]);
+    v
+}
+
+#[test]
+fn content_identifies_audio_and_pdf() {
+    assert_eq!(classify_bytes(&pdf_bytes(), None), EntryKind::Pdf);
+    assert_eq!(classify_bytes(&mp3_bytes(), None), EntryKind::Audio);
+    assert_eq!(classify_bytes(&flac_bytes(), None), EntryKind::Audio);
+    assert_eq!(classify_bytes(&wav_bytes(), None), EntryKind::Audio);
+}
+
+#[test]
+fn content_wins_over_a_misleading_extension_for_audio_and_pdf() {
+    assert_eq!(classify_bytes(&pdf_bytes(), Some("mp3")), EntryKind::Pdf);
+    assert_eq!(classify_bytes(&mp3_bytes(), Some("pdf")), EntryKind::Audio);
+    assert_eq!(classify_bytes(&mp3_bytes(), Some("png")), EntryKind::Audio);
+    assert_eq!(classify_bytes(&png_bytes(), Some("pdf")), EntryKind::Image);
+}
+
+#[test]
+fn extension_is_a_fallback_for_unrecognised_audio_and_pdf() {
+    let unknown = [0u8; 16];
+    assert_eq!(classify_bytes(&unknown, Some("mp3")), EntryKind::Audio);
+    assert_eq!(classify_bytes(&unknown, Some("FLAC")), EntryKind::Audio);
+    assert_eq!(classify_bytes(&unknown, Some("opus")), EntryKind::Audio);
+    assert_eq!(classify_bytes(&unknown, Some("pdf")), EntryKind::Pdf);
+    assert_eq!(classify_bytes(&unknown, Some("PDF")), EntryKind::Pdf);
+    assert_eq!(classify_bytes(&unknown, Some("docx")), EntryKind::Other);
+}
+
+#[test]
+fn encrypted_files_stay_encrypted_whatever_their_extension() {
+    assert_eq!(
+        classify_bytes(&encrypted_bytes(), Some("pdf")),
+        EntryKind::Encrypted
+    );
+    assert_eq!(
+        classify_bytes(&encrypted_bytes(), Some("mp3")),
+        EntryKind::Encrypted
+    );
+}
+
+#[test]
+fn listing_classifies_audio_and_pdf_files() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("song.mp3"), mp3_bytes()).unwrap();
+    fs::write(dir.path().join("paper.pdf"), pdf_bytes()).unwrap();
+    fs::write(dir.path().join("notes.txt"), b"plain notes").unwrap();
+    let entries = list_directory(dir.path(), false).unwrap();
+    let kind_of = |name: &str| entries.iter().find(|e| e.name == name).unwrap().kind;
+    assert_eq!(kind_of("song.mp3"), EntryKind::Audio);
+    assert_eq!(kind_of("paper.pdf"), EntryKind::Pdf);
+    assert_eq!(kind_of("notes.txt"), EntryKind::Other);
+}
+
+#[test]
+fn navigation_includes_audio_files_and_pdfs() {
+    let entries = vec![
+        entry("a.png", EntryKind::Image),
+        entry("b.mp3", EntryKind::Audio),
+        entry("c.txt", EntryKind::Other),
+        entry("d.pdf", EntryKind::Pdf),
+    ];
+    let mut nav = NavContext::from_entries(&entries);
+    assert_eq!(nav.len(), 3);
+    assert!(nav.set_current(&entries[1].path));
+    assert_eq!(nav.previous_path(), Some(entries[0].path.as_path()));
+    assert_eq!(nav.next_path(), Some(entries[3].path.as_path()));
+    assert!(nav.set_current(&entries[3].path));
+    assert_eq!(nav.position(), Some((3, 3)));
+}

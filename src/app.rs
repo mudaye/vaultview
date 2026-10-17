@@ -23,8 +23,13 @@ use crate::favorites::{self, FavoriteStatus, Favorites};
 use crate::format::KdfParams;
 use crate::media::{self, Decoded, ImageData};
 use crate::naming;
+use crate::pdf::{self, PageStep, PdfEvent, PdfWorker};
 use crate::session::Session;
 use crate::shred::{self, ShredReport};
+use crate::theater::{
+    BossSequence, BossStep, HudTimer, LayoutState, LayoutSync, TheaterStrategy, WindowCmd,
+    WindowSequencer,
+};
 use crate::viewer::ViewTransform;
 use crate::workflow::{self, BatchReport, Outcome};
 
@@ -82,11 +87,101 @@ struct VideoView {
     frame_size: (u32, u32),
     seek_preview: Option<f64>,
     encrypted: bool,
+    audio_hint: bool,
+    cover: Option<egui::TextureHandle>,
+}
+
+#[cfg(feature = "video")]
+impl VideoView {
+    /// Whether to show the audio layout (cover art and tags) instead of video frames.
+    ///
+    /// Before the stream has been analysed the content type decides; afterwards
+    /// the number of video streams does.
+    fn audio_view(&self) -> bool {
+        if self.player.duration().is_some() {
+            self.player.video_stream_count() == 0
+        } else {
+            self.audio_hint
+        }
+    }
+}
+
+struct ShownPage {
+    texture: egui::TextureHandle,
+    page: usize,
+    scale_bits: u32,
+}
+
+struct PdfView {
+    path: PathBuf,
+    worker: PdfWorker,
+    sizes: Vec<(f32, f32)>,
+    page: usize,
+    shown: Option<ShownPage>,
+    pending: Option<(usize, u32)>,
+    failed: Option<(usize, u32)>,
+    page_error: Option<String>,
+    degraded: bool,
+    viewport: (f32, f32),
+    transform: ViewTransform,
+    encrypted: bool,
+}
+
+impl PdfView {
+    fn new(path: PathBuf, worker: PdfWorker, encrypted: bool) -> Self {
+        Self {
+            path,
+            worker,
+            sizes: Vec::new(),
+            page: 0,
+            shown: None,
+            pending: None,
+            failed: None,
+            page_error: None,
+            degraded: false,
+            viewport: (0.0, 0.0),
+            transform: ViewTransform::new(),
+            encrypted,
+        }
+    }
+
+    fn loading(&self) -> bool {
+        self.sizes.is_empty()
+    }
+
+    fn page_count(&self) -> usize {
+        self.sizes.len()
+    }
+
+    fn size_pt(&self) -> (f32, f32) {
+        self.sizes
+            .get(self.page)
+            .copied()
+            .unwrap_or(c::PDF_DEFAULT_PAGE_SIZE)
+    }
+
+    /// Switches to `page` (clamped). Returns whether the page changed.
+    fn go_to(&mut self, page: usize) -> bool {
+        let page = page.min(self.sizes.len().saturating_sub(1));
+        if page == self.page {
+            return false;
+        }
+        self.page = page;
+        self.shown = None;
+        self.pending = None;
+        self.failed = None;
+        self.page_error = None;
+        self.degraded = false;
+        let size = self.size_pt();
+        self.transform.pan_by((0.0, 0.0), size, self.viewport);
+        true
+    }
 }
 
 enum Content {
     Empty,
     Image(ImageView),
+    Pdf(PdfView),
     #[cfg(feature = "video")]
     Video(VideoView),
     Failed {
@@ -100,10 +195,15 @@ enum Loaded {
         decoded: Decoded,
         encrypted: bool,
     },
+    Pdf {
+        worker: PdfWorker,
+        encrypted: bool,
+    },
     #[cfg(feature = "video")]
     Video {
         player: VideoPlayer,
         encrypted: bool,
+        audio_hint: bool,
     },
 }
 
@@ -227,7 +327,8 @@ enum Action {
     FitImage,
     ResetView,
     Pan(f32, f32),
-    ToggleFullscreen,
+    Pdf(PageStep),
+    ToggleTheater,
     ToggleHelp,
 }
 
@@ -241,9 +342,12 @@ struct Keys {
     reset: bool,
     actual: bool,
     fit_image: bool,
-    fullscreen: bool,
-    escape: bool,
+    theater: bool,
     pan: (f32, f32),
+    page_first: bool,
+    page_prev: bool,
+    page_next: bool,
+    page_last: bool,
     toggle: bool,
     seek_back: bool,
     seek_forward: bool,
@@ -274,7 +378,11 @@ pub struct VaultApp {
     status: Option<(String, f64)>,
     now: f64,
     compress: bool,
-    fullscreen: bool,
+    theater: bool,
+    layout: LayoutSync,
+    window: WindowSequencer,
+    hud: HudTimer,
+    boss: BossSequence,
     show_help: bool,
     texture_counter: u64,
     #[cfg_attr(not(feature = "video"), allow(dead_code))]
@@ -306,19 +414,33 @@ fn fmt_time(seconds: f64) -> String {
     }
 }
 
-fn read_limited(path: &Path) -> Result<Vec<u8>> {
+fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let len = fs::metadata(path)?.len();
-    if len > c::MAX_DECRYPTED_IMAGE_BYTES as u64 {
+    if len > limit as u64 {
         return Err(Error::TooLarge {
-            limit: c::MAX_DECRYPTED_IMAGE_BYTES as u64,
+            limit: limit as u64,
         });
     }
     Ok(fs::read(path)?)
 }
 
+#[cfg(feature = "video")]
+fn load_cover(ctx: &egui::Context, bytes: &[u8]) -> Option<egui::TextureHandle> {
+    let image = match media::decode_image(bytes).ok()? {
+        Decoded::Still(image) => image,
+        Decoded::Animated(frames) => frames.into_iter().next()?.image,
+    };
+    let image = media::downscale_to_fit(image, c::AUDIO_COVER_MAX_SIDE);
+    let color = egui::ColorImage::from_rgba_unmultiplied(
+        [image.width as usize, image.height as usize],
+        &image.rgba,
+    );
+    Some(ctx.load_texture("cover-art", color, egui::TextureOptions::LINEAR))
+}
+
 fn unsupported(path: &Path) -> Error {
     Error::Unsupported(format!(
-        "{} is not a supported image or video",
+        "{} is not a supported image, video, audio file or PDF",
         file_label(path)
     ))
 }
@@ -341,6 +463,8 @@ fn kind_style(kind: EntryKind) -> (&'static str, Color32) {
         EntryKind::Directory => ("📁", FOLDER),
         EntryKind::Image => ("🖼", Color32::LIGHT_GRAY),
         EntryKind::Video => ("🎬", Color32::LIGHT_GRAY),
+        EntryKind::Audio => ("🎵", Color32::LIGHT_GRAY),
+        EntryKind::Pdf => ("📕", Color32::LIGHT_GRAY),
         EntryKind::Encrypted => ("🔒", GOLD),
         EntryKind::Other => ("📄", Color32::GRAY),
     }
@@ -417,7 +541,16 @@ impl VaultApp {
             status: None,
             now: 0.0,
             compress: c::COMPRESS_ON_ENCRYPT_DEFAULT,
-            fullscreen: false,
+            theater: false,
+            layout: LayoutSync::default(),
+            window: WindowSequencer::new(
+                TheaterStrategy::from_setting(
+                    std::env::var(c::THEATER_STRATEGY_ENV).ok().as_deref(),
+                ),
+                c::THEATER_UNMAXIMIZE_TIMEOUT_FRAMES,
+            ),
+            hud: HudTimer::default(),
+            boss: BossSequence::default(),
             show_help: false,
             texture_counter: 0,
             video_ready,
@@ -458,6 +591,7 @@ impl VaultApp {
         match &self.content {
             Content::Empty => None,
             Content::Image(view) => Some(view.path.clone()),
+            Content::Pdf(view) => Some(view.path.clone()),
             #[cfg(feature = "video")]
             Content::Video(view) => Some(view.path.clone()),
             Content::Failed { path, .. } => Some(path.clone()),
@@ -467,6 +601,7 @@ impl VaultApp {
     fn open_file_info(&self) -> Option<(PathBuf, bool)> {
         match &self.content {
             Content::Image(view) => Some((view.path.clone(), view.encrypted)),
+            Content::Pdf(view) => Some((view.path.clone(), view.encrypted)),
             #[cfg(feature = "video")]
             Content::Video(view) => Some((view.path.clone(), view.encrypted)),
             _ => None,
@@ -524,13 +659,21 @@ impl VaultApp {
     fn load(&mut self, path: &Path, password: Option<&str>) -> Result<Loaded> {
         match browser::classify_file(path)? {
             EntryKind::Image => {
-                let bytes = read_limited(path)?;
+                let bytes = read_limited(path, c::MAX_DECRYPTED_IMAGE_BYTES)?;
                 Ok(Loaded::Image {
                     decoded: media::decode_image(&bytes)?,
                     encrypted: false,
                 })
             }
-            EntryKind::Video => self.load_video_file(path),
+            EntryKind::Pdf => {
+                let bytes = read_limited(path, c::MAX_PDF_BYTES)?;
+                Ok(Loaded::Pdf {
+                    worker: PdfWorker::open(bytes),
+                    encrypted: false,
+                })
+            }
+            EntryKind::Video => self.load_video_file(path, false),
+            EntryKind::Audio => self.load_video_file(path, true),
             EntryKind::Encrypted => self.load_encrypted(path, password),
             EntryKind::Directory | EntryKind::Other => Err(unsupported(path)),
         }
@@ -549,14 +692,17 @@ impl VaultApp {
             .and_then(|p| p.extension().map(|e| e.to_string_lossy().into_owned()));
 
         if decryptor.is_compressed() {
-            let data = decryptor.read_plaintext(c::MAX_DECRYPTED_IMAGE_BYTES)?;
+            let data =
+                decryptor.read_plaintext(c::MAX_DECRYPTED_IMAGE_BYTES.max(c::MAX_PDF_BYTES))?;
             let kind = browser::classify_bytes(
                 &data[..data.len().min(c::SNIFF_LEN)],
                 extension.as_deref(),
             );
             match kind {
                 EntryKind::Image => self.finish_image(path, &data),
-                EntryKind::Video => self.load_video_decrypted(VideoInput::Memory(data)),
+                EntryKind::Pdf => Ok(Self::finish_pdf(data)),
+                EntryKind::Video => self.load_video_decrypted(VideoInput::Memory(data), false),
+                EntryKind::Audio => self.load_video_decrypted(VideoInput::Memory(data), true),
                 _ => Err(unsupported(path)),
             }
         } else {
@@ -572,8 +718,15 @@ impl VaultApp {
                     let data = decryptor.read_plaintext(c::MAX_DECRYPTED_IMAGE_BYTES)?;
                     self.finish_image(path, &data)
                 }
+                EntryKind::Pdf => {
+                    let data = decryptor.read_plaintext(c::MAX_PDF_BYTES)?;
+                    Ok(Self::finish_pdf(data))
+                }
                 EntryKind::Video => {
-                    self.load_video_decrypted(VideoInput::Stream(Box::new(decryptor)))
+                    self.load_video_decrypted(VideoInput::Stream(Box::new(decryptor)), false)
+                }
+                EntryKind::Audio => {
+                    self.load_video_decrypted(VideoInput::Stream(Box::new(decryptor)), true)
                 }
                 _ => Err(unsupported(path)),
             }
@@ -589,6 +742,15 @@ impl VaultApp {
         })
     }
 
+    /// Hands decrypted PDF bytes to a render worker. The bytes are moved, not
+    /// copied; the PDF parser keeps its own copy, which is not zeroized.
+    fn finish_pdf(mut data: Zeroizing<Vec<u8>>) -> Loaded {
+        Loaded::Pdf {
+            worker: PdfWorker::open(std::mem::take(&mut *data)),
+            encrypted: true,
+        }
+    }
+
     #[cfg(feature = "video")]
     fn require_video(&self) -> Result<()> {
         if self.video_ready {
@@ -602,16 +764,17 @@ impl VaultApp {
     }
 
     #[cfg(feature = "video")]
-    fn load_video_file(&self, path: &Path) -> Result<Loaded> {
+    fn load_video_file(&self, path: &Path, audio_hint: bool) -> Result<Loaded> {
         self.require_video()?;
         Ok(Loaded::Video {
             player: VideoPlayer::open_file(path)?,
             encrypted: false,
+            audio_hint,
         })
     }
 
     #[cfg(feature = "video")]
-    fn load_video_decrypted(&self, input: VideoInput) -> Result<Loaded> {
+    fn load_video_decrypted(&self, input: VideoInput, audio_hint: bool) -> Result<Loaded> {
         self.require_video()?;
         let source: Box<dyn MediaSource> = match input {
             VideoInput::Stream(decryptor) => decryptor,
@@ -620,20 +783,21 @@ impl VaultApp {
         Ok(Loaded::Video {
             player: VideoPlayer::open_stream(source)?,
             encrypted: true,
+            audio_hint,
         })
     }
 
     #[cfg(not(feature = "video"))]
-    fn load_video_file(&self, _path: &Path) -> Result<Loaded> {
+    fn load_video_file(&self, _path: &Path, _audio_hint: bool) -> Result<Loaded> {
         Err(Error::Unsupported(
-            "this build of the application has no video support".to_string(),
+            "this build of the application has no video or audio support".to_string(),
         ))
     }
 
     #[cfg(not(feature = "video"))]
-    fn load_video_decrypted(&self, _input: VideoInput) -> Result<Loaded> {
+    fn load_video_decrypted(&self, _input: VideoInput, _audio_hint: bool) -> Result<Loaded> {
         Err(Error::Unsupported(
-            "this build of the application has no video support".to_string(),
+            "this build of the application has no video or audio support".to_string(),
         ))
     }
 
@@ -656,14 +820,23 @@ impl VaultApp {
             Loaded::Image { decoded, encrypted } => {
                 Content::Image(self.make_image_view(ctx, path, decoded, encrypted))
             }
+            Loaded::Pdf { worker, encrypted } => {
+                Content::Pdf(PdfView::new(path, worker, encrypted))
+            }
             #[cfg(feature = "video")]
-            Loaded::Video { player, encrypted } => Content::Video(VideoView {
+            Loaded::Video {
+                player,
+                encrypted,
+                audio_hint,
+            } => Content::Video(VideoView {
                 path,
                 player,
                 texture: None,
                 frame_size: (0, 0),
                 seek_preview: None,
                 encrypted,
+                audio_hint,
+                cover: None,
             }),
         };
     }
@@ -721,7 +894,11 @@ impl VaultApp {
                 .filter(|e| {
                     matches!(
                         e.kind,
-                        EntryKind::Image | EntryKind::Video | EntryKind::Encrypted
+                        EntryKind::Image
+                            | EntryKind::Video
+                            | EntryKind::Audio
+                            | EntryKind::Pdf
+                            | EntryKind::Encrypted
                     )
                 })
                 .collect();
@@ -737,9 +914,24 @@ impl VaultApp {
         }
     }
 
-    fn with_image(&mut self, f: impl FnOnce(&mut ImageView)) {
-        if let Content::Image(view) = &mut self.content {
-            f(view);
+    /// Runs `f` with the zoom/pan state, image size and viewport size of the
+    /// open image or PDF page (does nothing for other content).
+    fn with_view(&mut self, f: impl FnOnce(&mut ViewTransform, (f32, f32), (f32, f32))) {
+        match &mut self.content {
+            Content::Image(view) => f(&mut view.transform, view.size, view.viewport),
+            Content::Pdf(view) => {
+                let size = view.size_pt();
+                f(&mut view.transform, size, view.viewport);
+            }
+            _ => {}
+        }
+    }
+
+    /// Moves to another page of the open PDF.
+    fn pdf_navigate(&mut self, nav: PageStep) {
+        if let Content::Pdf(view) = &mut self.content {
+            let target = pdf::target_page(view.page, view.page_count(), nav);
+            view.go_to(target);
         }
     }
 
@@ -1060,18 +1252,23 @@ impl VaultApp {
                 self.session.shutdown();
                 self.say("Closed media, forgot passwords and cleared the decrypted cache.");
             }
-            Action::ZoomIn => self.with_image(|v| v.transform.zoom_in(v.size, v.viewport)),
-            Action::ZoomOut => self.with_image(|v| v.transform.zoom_out(v.size, v.viewport)),
-            Action::ActualSize => self.with_image(|v| v.transform.actual_size()),
-            Action::FitWindow => self.with_image(|v| v.transform.fit_window()),
-            Action::FitImage => self.with_image(|v| v.transform.fit_image()),
-            Action::ResetView => self.with_image(|v| v.transform.reset()),
+            Action::ZoomIn => self.with_view(|t, size, viewport| t.zoom_in(size, viewport)),
+            Action::ZoomOut => self.with_view(|t, size, viewport| t.zoom_out(size, viewport)),
+            Action::ActualSize => self.with_view(|t, _, _| t.actual_size()),
+            Action::FitWindow => self.with_view(|t, _, _| t.fit_window()),
+            Action::FitImage => self.with_view(|t, _, _| t.fit_image()),
+            Action::ResetView => self.with_view(|t, _, _| t.reset()),
             Action::Pan(dx, dy) => {
-                self.with_image(|v| v.transform.pan_by((dx, dy), v.size, v.viewport))
+                self.with_view(|t, size, viewport| t.pan_by((dx, dy), size, viewport))
             }
-            Action::ToggleFullscreen => {
-                self.fullscreen = !self.fullscreen;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+            Action::Pdf(nav) => self.pdf_navigate(nav),
+            Action::ToggleTheater => {
+                self.theater = !self.theater;
+                if self.theater {
+                    self.hud.poke(self.now);
+                }
+                let on = self.theater;
+                self.set_theater_window(ctx, on);
             }
             Action::ToggleHelp => self.show_help = !self.show_help,
         }
@@ -1093,8 +1290,11 @@ impl VaultApp {
             keys.reset = pressed(Key::Num0);
             keys.actual = pressed(Key::Num1);
             keys.fit_image = pressed(Key::Num2);
-            keys.fullscreen = pressed(Key::F) | pressed(Key::F11);
-            keys.escape = pressed(Key::Escape);
+            keys.theater = pressed(Key::F) | pressed(Key::F11);
+            keys.page_first = pressed(Key::Home);
+            keys.page_prev = pressed(Key::PageUp);
+            keys.page_next = pressed(Key::PageDown);
+            keys.page_last = pressed(Key::End);
             keys.toggle = pressed(Key::Space) | pressed(Key::K);
             keys.seek_back = pressed(Key::J);
             keys.seek_forward = pressed(Key::L);
@@ -1140,8 +1340,20 @@ impl VaultApp {
         if keys.fit_image {
             actions.push(Action::FitImage);
         }
-        if keys.fullscreen || (keys.escape && self.fullscreen) {
-            actions.push(Action::ToggleFullscreen);
+        if keys.theater {
+            actions.push(Action::ToggleTheater);
+        }
+        if keys.page_first {
+            actions.push(Action::Pdf(PageStep::First));
+        }
+        if keys.page_prev {
+            actions.push(Action::Pdf(PageStep::Prev));
+        }
+        if keys.page_next {
+            actions.push(Action::Pdf(PageStep::Next));
+        }
+        if keys.page_last {
+            actions.push(Action::Pdf(PageStep::Last));
         }
         if keys.pan != (0.0, 0.0) {
             actions.push(Action::Pan(keys.pan.0, keys.pan.1));
@@ -1177,8 +1389,85 @@ impl VaultApp {
 
     // ----- per-frame media upkeep -----
 
+    /// Applies worker results to an open PDF and asks for the page to be
+    /// (re-)rendered when the page or zoom changed. Returns a message when the
+    /// whole document has to be given up.
+    fn tick_pdf(view: &mut PdfView, ctx: &egui::Context) -> Option<String> {
+        let mut failure = None;
+        for event in view.worker.poll() {
+            match event {
+                PdfEvent::Opened { sizes } => view.sizes = sizes,
+                PdfEvent::OpenFailed(message) => failure = Some(message),
+                PdfEvent::Crashed => {
+                    failure = Some("the PDF renderer stopped unexpectedly".to_string());
+                }
+                PdfEvent::Rendered {
+                    page,
+                    scale,
+                    image,
+                    degraded,
+                } => {
+                    if view.pending == Some((page, scale.to_bits())) {
+                        view.pending = None;
+                    }
+                    if page == view.page {
+                        let color = egui::ColorImage::from_rgba_unmultiplied(
+                            [image.width as usize, image.height as usize],
+                            &image.rgba,
+                        );
+                        let texture =
+                            ctx.load_texture("pdf-page", color, egui::TextureOptions::LINEAR);
+                        view.shown = Some(ShownPage {
+                            texture,
+                            page,
+                            scale_bits: scale.to_bits(),
+                        });
+                        view.degraded = degraded;
+                        view.page_error = None;
+                    }
+                }
+                PdfEvent::RenderFailed {
+                    page,
+                    scale,
+                    message,
+                } => {
+                    if view.pending == Some((page, scale.to_bits())) {
+                        view.pending = None;
+                    }
+                    if page == view.page {
+                        view.failed = Some((page, scale.to_bits()));
+                        view.page_error = Some(message);
+                        view.shown = None;
+                    }
+                }
+            }
+        }
+        if failure.is_some() {
+            return failure;
+        }
+        if !view.loading() && view.viewport.0 >= 2.0 && view.viewport.1 >= 2.0 {
+            let size = view.size_pt();
+            let scale = pdf::render_scale(
+                view.transform.scale(size, view.viewport),
+                ctx.pixels_per_point(),
+                size,
+            );
+            let want = (view.page, scale.to_bits());
+            let have = view.shown.as_ref().map(|s| (s.page, s.scale_bits));
+            if Some(want) != have && Some(want) != view.pending && Some(want) != view.failed {
+                view.worker.request(view.page, scale);
+                view.pending = Some(want);
+            }
+        }
+        if view.loading() || view.pending.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(c::PDF_POLL_MS));
+        }
+        None
+    }
+
     fn tick_media(&mut self, ctx: &egui::Context) {
         let now = self.now;
+        let mut failure: Option<(PathBuf, String)> = None;
         match &mut self.content {
             Content::Image(view) if view.textures.len() > 1 => {
                 if now >= view.next_switch {
@@ -1211,6 +1500,11 @@ impl VaultApp {
                     }
                     view.frame_size = dims;
                 }
+                if view.cover.is_none() {
+                    if let Some(bytes) = view.player.take_cover_art() {
+                        view.cover = load_cover(ctx, &bytes);
+                    }
+                }
                 let interval = if view.player.is_playing() {
                     c::VIDEO_REPAINT_MS
                 } else {
@@ -1218,7 +1512,18 @@ impl VaultApp {
                 };
                 ctx.request_repaint_after(Duration::from_millis(interval));
             }
+            Content::Pdf(view) => {
+                if let Some(message) = Self::tick_pdf(view, ctx) {
+                    failure = Some((view.path.clone(), message));
+                }
+            }
             _ => {}
+        }
+        if let Some((path, message)) = failure {
+            self.content = Content::Failed {
+                message: format!("{}: {message}", file_label(&path)),
+                path,
+            };
         }
     }
 
@@ -1267,7 +1572,7 @@ impl VaultApp {
                     actions.push(Action::LockAll);
                 }
             });
-            if matches!(self.content, Content::Image(_)) {
+            if matches!(self.content, Content::Image(_) | Content::Pdf(_)) {
                 ui.separator();
                 if ui.button("−").on_hover_text("Zoom out").clicked() {
                     actions.push(Action::ZoomOut);
@@ -1306,6 +1611,13 @@ impl VaultApp {
                 .clicked()
             {
                 actions.push(Action::Next);
+            }
+            if ui
+                .button("Theater")
+                .on_hover_text("Borderless full screen, viewing pane only (F or F11)")
+                .clicked()
+            {
+                actions.push(Action::ToggleTheater);
             }
             if ui.button("Help").clicked() {
                 actions.push(Action::ToggleHelp);
@@ -1465,7 +1777,7 @@ impl VaultApp {
             Content::Empty => {
                 ui.centered_and_justified(|ui| {
                     ui.label(
-                        RichText::new("Select an image or video in the file browser.\nLeft/Right arrows move between files.")
+                        RichText::new("Select an image, video, audio file or PDF in the file browser.\nLeft/Right arrows move between files.")
                             .color(Color32::GRAY),
                     );
                 });
@@ -1481,30 +1793,44 @@ impl VaultApp {
                 let viewport = (rect.width(), rect.height());
                 view.viewport = viewport;
                 let size = view.size;
-                if response.hovered() {
-                    let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-                    let factor = pinch * (scroll / 300.0).exp();
-                    if (factor - 1.0).abs() > 1e-4 {
-                        if let Some(pointer) = response.hover_pos() {
-                            let anchor = (pointer.x - rect.center().x, pointer.y - rect.center().y);
-                            view.transform.zoom_at(factor, anchor, size, viewport);
-                        }
-                    }
-                }
-                if response.dragged() {
-                    let delta = response.drag_delta();
-                    view.transform.pan_by((delta.x, delta.y), size, viewport);
-                }
-                if response.double_clicked() {
-                    if view.transform.mode() == crate::viewer::ViewMode::Manual {
-                        view.transform.fit_window();
-                    } else {
-                        view.transform.actual_size();
-                    }
-                }
+                view_input(ui, &response, rect, &mut view.transform, size);
                 if let Some((texture, _)) = view.textures.get(view.index) {
                     paint_texture(ui, rect, texture, &view.transform, size);
                 }
+            }
+            Content::Pdf(view) => {
+                let available = ui.available_size();
+                let area = egui::vec2(
+                    available.x,
+                    (available.y - c::PDF_CONTROLS_HEIGHT).max(80.0),
+                );
+                let (rect, response) = ui.allocate_exact_size(area, egui::Sense::click_and_drag());
+                view.viewport = (rect.width(), rect.height());
+                let size = view.size_pt();
+                view_input(ui, &response, rect, &mut view.transform, size);
+                match (&view.shown, &view.page_error) {
+                    (Some(shown), _) => {
+                        paint_texture(ui, rect, &shown.texture, &view.transform, size)
+                    }
+                    (None, Some(message)) => centered_text(
+                        ui,
+                        rect,
+                        format!("This page could not be displayed:\n{message}"),
+                        BAD,
+                    ),
+                    (None, None) => centered_text(
+                        ui,
+                        rect,
+                        if view.loading() {
+                            "Loading PDF…"
+                        } else {
+                            "Rendering page…"
+                        }
+                        .to_string(),
+                        Color32::GRAY,
+                    ),
+                }
+                pdf_controls(ui, view, actions);
             }
             #[cfg(feature = "video")]
             Content::Video(view) => {
@@ -1512,26 +1838,30 @@ impl VaultApp {
                 let available = ui.available_size();
                 let area = egui::vec2(available.x, (available.y - controls_height).max(80.0));
                 let (rect, response) = ui.allocate_exact_size(area, egui::Sense::click());
-                match &view.texture {
-                    Some(texture) => {
-                        let size = (view.frame_size.0 as f32, view.frame_size.1 as f32);
-                        paint_texture(ui, rect, texture, &ViewTransform::new(), size);
-                    }
-                    None => {
-                        ui.painter_at(rect).text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Loading video…",
-                            egui::FontId::proportional(16.0),
-                            Color32::GRAY,
-                        );
+                if view.audio_view() {
+                    draw_audio_view(ui, rect, view);
+                } else {
+                    match &view.texture {
+                        Some(texture) => {
+                            let size = (view.frame_size.0 as f32, view.frame_size.1 as f32);
+                            paint_texture(ui, rect, texture, &ViewTransform::new(), size);
+                        }
+                        None => {
+                            ui.painter_at(rect).text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "Loading video…",
+                                egui::FontId::proportional(16.0),
+                                Color32::GRAY,
+                            );
+                        }
                     }
                 }
                 if response.clicked() {
                     view.player.toggle();
                 }
                 if response.double_clicked() {
-                    actions.push(Action::ToggleFullscreen);
+                    actions.push(Action::ToggleTheater);
                 }
                 if let Some(error) = view.player.error() {
                     ui.colored_label(BAD, format!("Playback error: {error}"));
@@ -1562,6 +1892,24 @@ impl VaultApp {
                 let ratio = view.size.0 / view.original.0.max(1) as f32;
                 let scale = view.transform.scale(view.size, view.viewport) * ratio;
                 text.push_str(&format!("  {:.0}%{position}", scale * 100.0));
+                text
+            }
+            Content::Pdf(view) => {
+                let mut text = file_label(&view.path);
+                if view.encrypted {
+                    text.push_str("  [encrypted, decrypted in memory]");
+                }
+                if view.loading() {
+                    text.push_str("  loading…");
+                } else {
+                    let scale = view.transform.scale(view.size_pt(), view.viewport);
+                    text.push_str(&format!(
+                        "  page {}/{}  {:.0}%{position}",
+                        view.page + 1,
+                        view.page_count(),
+                        scale * 100.0
+                    ));
+                }
                 text
             }
             #[cfg(feature = "video")]
@@ -1797,13 +2145,158 @@ impl VaultApp {
             });
     }
 
+    // ----- boss key and theater mode -----
+
+    /// Starts entering or leaving full screen for theater mode. The steps (for
+    /// example restoring a maximized window first) follow the configured
+    /// strategy; see [`WindowSequencer`].
+    fn set_theater_window(&mut self, ctx: &egui::Context, on: bool) {
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        let cmds = if on {
+            self.window.enter(maximized)
+        } else {
+            self.window.leave()
+        };
+        Self::send_window_cmds(ctx, &cmds);
+    }
+
+    fn send_window_cmds(ctx: &egui::Context, cmds: &[WindowCmd]) {
+        for cmd in cmds {
+            ctx.send_viewport_cmd(match *cmd {
+                WindowCmd::Maximize(on) => egui::ViewportCommand::Maximized(on),
+                WindowCmd::Fullscreen(on) => egui::ViewportCommand::Fullscreen(on),
+                WindowCmd::Decorations(on) => egui::ViewportCommand::Decorations(on),
+            });
+        }
+    }
+
+    /// Esc is the boss key. It works in every state of the main window (also
+    /// while a text box or dialog has focus) and runs the existing Lock All
+    /// action, then discards open dialogs (they may hold typed passwords),
+    /// leaves theater mode and, a few frames later, minimizes the window.
+    fn handle_boss_key(&mut self, ctx: &egui::Context) {
+        let pressed = ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+        if pressed && self.boss.begin(self.theater) {
+            self.apply(ctx, Action::LockAll);
+            self.dialog = None;
+            self.show_help = false;
+            if self.theater {
+                self.theater = false;
+                self.set_theater_window(ctx, false);
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    /// Minimizes the window once the cleared frame has been presented and
+    /// full screen has ended (see [`BossSequence`]).
+    fn advance_boss(&mut self, ctx: &egui::Context) {
+        if !self.boss.is_active() {
+            return;
+        }
+        let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        if self.boss.advance(fullscreen) == BossStep::Minimize {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        if self.boss.is_active() {
+            ctx.request_repaint();
+        }
+    }
+
+    fn update_hud(&mut self, ctx: &egui::Context) {
+        if !self.theater {
+            return;
+        }
+        let active = ctx.input(|i| {
+            i.pointer.delta() != egui::Vec2::ZERO
+                || i.pointer.any_pressed()
+                || i.smooth_scroll_delta != egui::Vec2::ZERO
+                || i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))
+        });
+        if active {
+            self.hud.poke(self.now);
+        }
+    }
+
+    /// The auto-hiding overlay of theater mode: exit, file navigation and zoom.
+    fn ui_theater_hud(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        if !self.hud.visible(self.now) {
+            if self.dialog.is_none() && self.job.is_none() {
+                ctx.set_cursor_icon(egui::CursorIcon::None);
+            }
+            return;
+        }
+        ctx.request_repaint_after(Duration::from_secs_f64(self.hud.remaining(self.now) + 0.05));
+        let zoomable = matches!(self.content, Content::Image(_) | Content::Pdf(_));
+        let name = self
+            .content_path()
+            .map(|p| file_label(&p))
+            .unwrap_or_default();
+        egui::Area::new(egui::Id::new("theater-hud"))
+            .anchor(egui::Align2::CENTER_TOP, [0.0, c::THEATER_HUD_MARGIN])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Exit theater")
+                            .on_hover_text("Leave theater mode (F or F11)")
+                            .clicked()
+                        {
+                            actions.push(Action::ToggleTheater);
+                        }
+                        ui.separator();
+                        if ui
+                            .button("◀")
+                            .on_hover_text("Previous file (Left arrow)")
+                            .clicked()
+                        {
+                            actions.push(Action::Prev);
+                        }
+                        if ui
+                            .button("▶")
+                            .on_hover_text("Next file (Right arrow)")
+                            .clicked()
+                        {
+                            actions.push(Action::Next);
+                        }
+                        if zoomable {
+                            ui.separator();
+                            if ui.button("−").on_hover_text("Zoom out").clicked() {
+                                actions.push(Action::ZoomOut);
+                            }
+                            if ui.button("+").on_hover_text("Zoom in").clicked() {
+                                actions.push(Action::ZoomIn);
+                            }
+                            if ui.button("100%").clicked() {
+                                actions.push(Action::ActualSize);
+                            }
+                            if ui.button("Fit window").clicked() {
+                                actions.push(Action::FitWindow);
+                            }
+                        }
+                        if !name.is_empty() {
+                            ui.separator();
+                            ui.label(name);
+                        }
+                        ui.separator();
+                        ui.weak("Esc: lock and minimize");
+                    });
+                });
+            });
+    }
+
     fn show_help_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_help;
         egui::Window::new("Help").open(&mut open).default_width(420.0).show(ctx, |ui| {
-            ui.label("Left / Right: previous / next file     F or F11: full screen     Esc: leave full screen");
+            ui.label("Left / Right: previous / next file     F or F11: theater mode (borderless full screen)");
+            ui.label("Esc: boss key. Locks everything, leaves theater mode and minimizes the window");
             ui.label("+ / −: zoom     1: 100%     2: fit image     0: reset     W A S D: pan (or drag)");
             ui.label("Mouse wheel: zoom at the pointer     Double-click: toggle 100% / fit");
-            ui.label("Video: Space or K: play/pause     J / L: back / forward     Up / Down: volume     M: mute");
+            ui.label("PDF: Page Up / Page Down / Home / End: change page");
+            ui.label("Video and audio: Space or K: play/pause     J / L: back / forward     Up / Down: volume     M: mute");
             ui.separator();
             ui.label("Tick files with the check boxes (Shift extends a range), then use Encrypt, Delete or Deep delete.");
             ui.label("Encrypted files show a lock and are decrypted only in memory while viewed.");
@@ -1811,6 +2304,158 @@ impl VaultApp {
             ui.colored_label(WARN, "A lost password cannot be recovered. Deep delete cannot guarantee physical erasure.");
         });
         self.show_help = open;
+    }
+}
+
+/// Mouse handling shared by images and PDF pages: wheel or pinch zooms at the
+/// pointer, dragging pans, double-click toggles 100% and fit.
+fn view_input(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    rect: egui::Rect,
+    transform: &mut ViewTransform,
+    size: (f32, f32),
+) {
+    let viewport = (rect.width(), rect.height());
+    if response.hovered() {
+        let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+        let factor = pinch * (scroll / 300.0).exp();
+        if (factor - 1.0).abs() > 1e-4 {
+            if let Some(pointer) = response.hover_pos() {
+                let anchor = (pointer.x - rect.center().x, pointer.y - rect.center().y);
+                transform.zoom_at(factor, anchor, size, viewport);
+            }
+        }
+    }
+    if response.dragged() {
+        let delta = response.drag_delta();
+        transform.pan_by((delta.x, delta.y), size, viewport);
+    }
+    if response.double_clicked() {
+        if transform.mode() == crate::viewer::ViewMode::Manual {
+            transform.fit_window();
+        } else {
+            transform.actual_size();
+        }
+    }
+}
+
+/// Draws wrapped text centred in `rect`.
+fn centered_text(ui: &egui::Ui, rect: egui::Rect, text: String, color: Color32) {
+    let painter = ui.painter_at(rect);
+    let galley = painter.layout(
+        text,
+        egui::FontId::proportional(16.0),
+        color,
+        (rect.width() - 48.0).max(50.0),
+    );
+    let pos = rect.center() - galley.size() / 2.0;
+    painter.galley(pos, galley, color);
+}
+
+fn pdf_controls(ui: &mut egui::Ui, view: &PdfView, actions: &mut Vec<Action>) {
+    ui.horizontal(|ui| {
+        let count = view.page_count().max(1);
+        if ui.button("|◀").on_hover_text("First page (Home)").clicked() {
+            actions.push(Action::Pdf(PageStep::First));
+        }
+        if ui
+            .button("◀")
+            .on_hover_text("Previous page (Page Up)")
+            .clicked()
+        {
+            actions.push(Action::Pdf(PageStep::Prev));
+        }
+        let mut page = view.page + 1;
+        if ui
+            .add(egui::DragValue::new(&mut page).range(1..=count).speed(0.1))
+            .changed()
+        {
+            actions.push(Action::Pdf(PageStep::Goto(page.saturating_sub(1))));
+        }
+        ui.label(format!("/ {count}"));
+        if ui
+            .button("▶")
+            .on_hover_text("Next page (Page Down)")
+            .clicked()
+        {
+            actions.push(Action::Pdf(PageStep::Next));
+        }
+        if ui.button("▶|").on_hover_text("Last page (End)").clicked() {
+            actions.push(Action::Pdf(PageStep::Last));
+        }
+        if view.loading() {
+            ui.weak("Loading…");
+        }
+        if view.degraded {
+            ui.colored_label(WARN, "Some content on this page may not display correctly.");
+        }
+    });
+}
+
+#[cfg(feature = "video")]
+fn draw_audio_view(ui: &egui::Ui, rect: egui::Rect, view: &VideoView) {
+    let painter = ui.painter_at(rect);
+    let margin = c::AUDIO_VIEW_MARGIN;
+    let inner = rect.shrink(margin);
+    let info = view.player.info();
+    let fallback = view
+        .path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file_label(&view.path));
+
+    let mut text_area = inner;
+    if let Some(cover) = &view.cover {
+        let side = inner.height().min(inner.width() * 0.45).max(1.0);
+        let slot = egui::Rect::from_min_size(
+            egui::pos2(inner.left(), inner.center().y - side / 2.0),
+            egui::vec2(side, side),
+        );
+        let texture_size = cover.size_vec2();
+        let scale =
+            (slot.width() / texture_size.x.max(1.0)).min(slot.height() / texture_size.y.max(1.0));
+        let image_rect = egui::Rect::from_center_size(slot.center(), texture_size * scale);
+        painter.image(
+            cover.id(),
+            image_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        text_area =
+            egui::Rect::from_min_max(egui::pos2(slot.right() + margin, inner.top()), inner.max);
+    }
+
+    let mut lines: Vec<(String, f32, Color32)> =
+        vec![(info.title_or(&fallback).to_string(), 26.0, Color32::WHITE)];
+    if let Some(artist) = &info.artist {
+        lines.push((artist.clone(), 18.0, Color32::LIGHT_GRAY));
+    }
+    if let Some(album) = &info.album {
+        lines.push((album.clone(), 16.0, Color32::GRAY));
+    }
+    if let Some(genre) = &info.genre {
+        lines.push((genre.clone(), 14.0, Color32::GRAY));
+    }
+    if let Some(details) = info.details_line() {
+        lines.push((details, 14.0, Color32::GRAY));
+    }
+    let wrap = text_area.width().max(50.0);
+    let galleys: Vec<_> = lines
+        .into_iter()
+        .map(|(text, size, color)| {
+            painter.layout(text, egui::FontId::proportional(size), color, wrap)
+        })
+        .collect();
+    let spacing = 8.0;
+    let total: f32 = galleys.iter().map(|g| g.size().y).sum::<f32>()
+        + spacing * galleys.len().saturating_sub(1) as f32;
+    let mut y = text_area.center().y - total / 2.0;
+    for galley in galleys {
+        let height = galley.size().y;
+        let x = text_area.center().x - galley.size().x / 2.0;
+        painter.galley(egui::pos2(x, y), galley, Color32::WHITE);
+        y += height + spacing;
     }
 }
 
@@ -1896,8 +2541,12 @@ fn video_controls(ui: &mut egui::Ui, view: &mut VideoView, actions: &mut Vec<Act
                     }
                 });
         }
-        if ui.button("Fullscreen").clicked() {
-            actions.push(Action::ToggleFullscreen);
+        if ui
+            .button("Theater")
+            .on_hover_text("Borderless full screen (F or F11)")
+            .clicked()
+        {
+            actions.push(Action::ToggleTheater);
         }
     });
 }
@@ -1918,13 +2567,33 @@ impl eframe::App for VaultApp {
             ctx.request_repaint_after(Duration::from_secs(2));
         }
 
+        self.handle_boss_key(ctx);
+        self.update_hud(ctx);
         self.poll_job(ctx);
         self.tick_media(ctx);
         let keys = self.read_keys(ctx);
         self.apply_keys(ctx, keys);
 
+        // Switch layouts only once the window itself has changed size, so the
+        // new layout is never drawn at the old window size (that shows as flicker).
+        let (reported_maximized, reported_fullscreen) = ctx.input(|i| {
+            let viewport = i.viewport();
+            (viewport.maximized, viewport.fullscreen)
+        });
+        let cmds = self.window.advance(reported_maximized, reported_fullscreen);
+        Self::send_window_cmds(ctx, &cmds);
+        if self.window.is_busy() {
+            ctx.request_repaint();
+        }
+        let layout = self
+            .layout
+            .update(self.window.fullscreen_requested(), reported_fullscreen);
+        if layout == LayoutState::Switching {
+            ctx.request_repaint();
+        }
+
         let mut actions: Vec<Action> = Vec::new();
-        if !self.fullscreen {
+        if layout == LayoutState::Normal {
             egui::TopBottomPanel::top("toolbar").show(ctx, |ui| self.ui_toolbar(ui, &mut actions));
             egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -1942,7 +2611,14 @@ impl eframe::App for VaultApp {
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(Color32::from_gray(c::VIEWER_BACKGROUND_GRAY)))
-            .show(ctx, |ui| self.ui_viewer(ui, &mut actions));
+            .show(ctx, |ui| {
+                if layout != LayoutState::Switching {
+                    self.ui_viewer(ui, &mut actions);
+                }
+            });
+        if layout == LayoutState::Theater {
+            self.ui_theater_hud(ctx, &mut actions);
+        }
 
         self.show_dialogs(ctx);
         self.show_job_window(ctx);
@@ -1951,6 +2627,7 @@ impl eframe::App for VaultApp {
         for action in actions {
             self.apply(ctx, action);
         }
+        self.advance_boss(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
