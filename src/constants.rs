@@ -196,5 +196,61 @@ pub const VIDEO_REPAINT_MS: u64 = 16;
 /// Seconds to wait for the video pipeline to change state.
 pub const VIDEO_STATE_TIMEOUT_SECS: u64 = 10;
 
+// ---------------------------------------------------------------------------
+// Audio and PDF
+// ---------------------------------------------------------------------------
+
+/// Extensions (lowercase, no dot) treated as audio when content is unrecognised.
+pub const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "wav", "wma", "aif", "aiff", "mka", "weba",
+];
+/// Extension (lowercase, no dot) treated as PDF when content is unrecognised.
+pub const PDF_EXTENSION: &str = "pdf";
+/// Largest PDF (plain, or decrypted and decompressed) that will be opened.
+pub const MAX_PDF_BYTES: usize = 256 * 1024 * 1024;
+/// Largest number of pixels rendered for one PDF page.
+pub const PDF_MAX_RENDER_PIXELS: u64 = 24_000_000;
+/// Number of discrete render scales per doubling of the zoom factor.
+pub const PDF_RENDER_STEPS_PER_OCTAVE: f32 = 4.0;
+/// Smallest render scale (pixels per page point) ever requested.
+pub const PDF_MIN_RENDER_SCALE: f32 = 0.05;
+/// Page size (width, height in points) assumed for pages with an invalid size (A4).
+pub const PDF_DEFAULT_PAGE_SIZE: (f32, f32) = (595.0, 842.0);
+/// Height reserved for the PDF page controls under the page.
+pub const PDF_CONTROLS_HEIGHT: f32 = 40.0;
+/// Interval (ms) at which the UI polls the PDF worker while it is busy.
+pub const PDF_POLL_MS: u64 = 30;
+/// Longest audio tag text kept, in characters.
+pub const AUDIO_TAG_MAX_CHARS: usize = 512;
+/// Largest embedded cover-art image kept, in bytes.
+pub const AUDIO_COVER_MAX_BYTES: usize = 16 * 1024 * 1024;
+/// Longest side (pixels) of the cover-art texture.
+pub const AUDIO_COVER_MAX_SIDE: u32 = 1024;
+/// Margin (points) around the audio cover art and text.
+pub const AUDIO_VIEW_MARGIN: f32 = 24.0;
+
+// ---------------------------------------------------------------------------
+// Theater mode and boss key
+// ---------------------------------------------------------------------------
+
+/// Seconds the theater overlay stays visible after the last user activity.
+pub const THEATER_HUD_TIMEOUT_SECS: f64 = 3.0;
+/// Distance (points) of the theater overlay from the top edge.
+pub const THEATER_HUD_MARGIN: f32 = 12.0;
+/// Frames the boss-key sequence waits after locking before it minimizes.
+pub const BOSS_SETTLE_FRAMES: u8 = 2;
+/// Frames the boss-key sequence waits for theater mode to end before it continues anyway.
+pub const BOSS_LEAVE_THEATER_TIMEOUT_FRAMES: u16 = 90;
+/// Frames to wait for the window to report a full-screen change before the
+/// layout switches anyway. Zero switches the layout immediately.
+pub const THEATER_SWITCH_TIMEOUT_FRAMES: u16 = 30;
+/// Frames to wait for a maximized window to report that it was restored (and
+/// for full screen to end before it is maximized again) before continuing anyway.
+pub const THEATER_UNMAXIMIZE_TIMEOUT_FRAMES: u16 = 30;
+/// Environment variable that selects how theater mode changes the window:
+/// `direct`, `decorations` or `unmaximize`. Unset or unknown values use the
+/// platform default.
+pub const THEATER_STRATEGY_ENV: &str = "VAULTVIEW_THEATER";
+
 #[cfg(test)]
 mod tests;
