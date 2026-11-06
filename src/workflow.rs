@@ -16,15 +16,32 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::constants::{IO_BLOCK_LEN, MIN_PASSWORD_CHARS};
-use crate::crypto::{decrypt_stream, encrypt_stream, EncryptOptions, EncryptStats};
+use crate::constants::{FORMAT_VERSION_V1, IO_BLOCK_LEN, MIN_PASSWORD_CHARS};
+use crate::crypto::{
+    decrypt_stream, encrypt_stream, rewrap_header, Decryptor, EncryptOptions, EncryptStats,
+};
 use crate::error::{Error, Result};
-use crate::format::is_encrypted_file;
-use crate::naming::{encrypted_path, is_taken, temp_path_for};
+use crate::format::{self, is_encrypted_file, KdfParams};
+use crate::naming::{
+    decrypted_temp_path_for, decryption_destination, encrypted_path, header_backup_path_for,
+    is_taken, temp_path_for, Destination,
+};
+use crate::shred;
+use std::io::Write;
 
 /// Result of encrypting one file.
 #[derive(Debug)]
 pub enum Outcome {
+    /// The file was decrypted and written to disk.
+    Decrypted {
+        /// Path of the decrypted plaintext file.
+        output: PathBuf,
+    },
+    /// The file's password was changed.
+    PasswordChanged {
+        /// Path of the encrypted file whose password was updated.
+        output: PathBuf,
+    },
     /// The file was encrypted, verified and renamed.
     Encrypted {
         /// Path of the encrypted file.
@@ -57,6 +74,12 @@ impl FileReport {
     /// A human-readable one-line description identifying the affected file.
     pub fn message(&self) -> String {
         match &self.outcome {
+            Outcome::Decrypted { output } => {
+                format!("Decrypted {} -> {}", self.path.display(), output.display())
+            }
+            Outcome::PasswordChanged { output } => {
+                format!("Password changed for {}", output.display())
+            }
             Outcome::Encrypted { output } => {
                 format!("Encrypted {} -> {}", self.path.display(), output.display())
             }
@@ -91,7 +114,14 @@ impl BatchReport {
     pub fn succeeded(&self) -> usize {
         self.files
             .iter()
-            .filter(|f| matches!(f.outcome, Outcome::Encrypted { .. }))
+            .filter(|f| {
+                matches!(
+                    f.outcome,
+                    Outcome::Encrypted { .. }
+                        | Outcome::Decrypted { .. }
+                        | Outcome::PasswordChanged { .. }
+                )
+            })
             .count()
     }
 
@@ -327,6 +357,322 @@ pub fn encrypt_batch(
     for (index, path) in paths.iter().enumerate() {
         progress(index, total, path);
         let outcome = encrypt_one(path, password, options);
+        report.files.push(FileReport {
+            path: path.clone(),
+            outcome,
+        });
+    }
+    Ok(report)
+}
+
+/// Decrypts one encrypted file to `dest_path`.
+///
+/// Plaintext is written to a hidden staging file first; if any error occurs
+/// (authentication failure, corruption, I/O), the staging file is overwritten
+/// with zeros and removed so no unauthenticated or partial plaintext remains.
+/// If `remove_source` is true, the source encrypted file is removed on success.
+pub fn decrypt_one(
+    encrypted_path: &Path,
+    dest_path: &Path,
+    password: &str,
+    remove_source: bool,
+) -> Outcome {
+    let meta = match fs::symlink_metadata(encrypted_path) {
+        Ok(m) => m,
+        Err(e) => return Outcome::Failed { error: e.into() },
+    };
+    if !meta.is_file() {
+        return Outcome::Failed {
+            error: Error::NotAFile(encrypted_path.to_path_buf()),
+        };
+    }
+    if !is_encrypted_file(encrypted_path) {
+        return Outcome::Failed {
+            error: Error::NotEncrypted,
+        };
+    }
+    if is_taken(dest_path) {
+        return Outcome::Failed {
+            error: Error::DestinationExists(dest_path.to_path_buf()),
+        };
+    }
+
+    let temp = decrypted_temp_path_for(dest_path);
+    let temp_file = match OpenOptions::new().write(true).create_new(true).open(&temp) {
+        Ok(f) => f,
+        Err(e) => return Outcome::Failed { error: e.into() },
+    };
+
+    let decrypt_res = (|| -> Result<u64> {
+        let mut writer = BufWriter::new(temp_file);
+        let mut source_file = File::open(encrypted_path)?;
+        let bytes_written = decrypt_stream(&mut source_file, &mut writer, password)?;
+        let file = writer.into_inner().map_err(|e| Error::Io(e.into_error()))?;
+        file.sync_all()?;
+        Ok(bytes_written)
+    })();
+
+    if let Err(error) = decrypt_res {
+        let _ = shred::deep_delete(&temp);
+        return Outcome::Failed { error };
+    }
+
+    if let Err(e) = fs::rename(&temp, dest_path) {
+        let _ = shred::deep_delete(&temp);
+        return Outcome::Failed { error: e.into() };
+    }
+
+    if remove_source {
+        if let Err(e) = shred::normal_delete(encrypted_path) {
+            return Outcome::Indeterminate {
+                error: e,
+                recovery_copy: None,
+            };
+        }
+    }
+
+    Outcome::Decrypted {
+        output: dest_path.to_path_buf(),
+    }
+}
+
+/// Decrypts every selected path using `password`.
+///
+/// Dest paths are determined by [`naming::decryption_destination`].
+/// A failure of one file never stops the batch.
+pub fn decrypt_batch(
+    paths: &[PathBuf],
+    password: &str,
+    remove_source: bool,
+    progress: &mut dyn FnMut(usize, usize, &Path),
+) -> Result<BatchReport> {
+    if paths.is_empty() {
+        return Err(Error::InvalidArgument("no files selected"));
+    }
+    let total = paths.len();
+    let mut report = BatchReport::default();
+    for (index, path) in paths.iter().enumerate() {
+        progress(index, total, path);
+        let dest = match decryption_destination(path) {
+            Destination::Restored(dest) => dest,
+            Destination::NeedsChoice { suggested } => suggested,
+        };
+        let outcome = decrypt_one(path, &dest, password, remove_source);
+        report.files.push(FileReport {
+            path: path.clone(),
+            outcome,
+        });
+    }
+    Ok(report)
+}
+
+/// Updates the password of an encrypted file.
+///
+/// For Format v2 files, this performs an in-place atomic rewrite of the 129-byte header
+/// without modifying or re-encrypting the content payload.
+/// For Format v1 files, this performs a full re-encryption migration to Format v2
+/// using the existing staging and overwrite protocol.
+pub fn change_password_one(
+    path: &Path,
+    old_password: &str,
+    new_password: &str,
+    options: Option<&EncryptOptions>,
+) -> Outcome {
+    if let Err(e) = validate_password(new_password) {
+        return Outcome::Failed { error: e };
+    }
+    let meta = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) => return Outcome::Failed { error: e.into() },
+    };
+    if !meta.is_file() {
+        return Outcome::Failed {
+            error: Error::NotAFile(path.to_path_buf()),
+        };
+    }
+    if !is_encrypted_file(path) {
+        return Outcome::Failed {
+            error: Error::NotEncrypted,
+        };
+    }
+
+    let header = match (|| -> Result<format::Header> {
+        let mut file = File::open(path)?;
+        format::read_header(&mut file)
+    })() {
+        Ok(h) => h,
+        Err(e) => return Outcome::Failed { error: e },
+    };
+
+    if header.version == FORMAT_VERSION_V1 {
+        migrate_v1_to_v2(path, old_password, new_password, options)
+    } else {
+        rewrap_file_v2(
+            path,
+            &header,
+            old_password,
+            new_password,
+            options.map(|o| &o.kdf),
+        )
+    }
+}
+
+fn rewrap_file_v2(
+    path: &Path,
+    header: &format::Header,
+    old_password: &str,
+    new_password: &str,
+    new_params: Option<&KdfParams>,
+) -> Outcome {
+    let new_header = match rewrap_header(header, old_password, new_password, new_params) {
+        Ok(h) => h,
+        Err(e) => return Outcome::Failed { error: e },
+    };
+
+    let backup_path = header_backup_path_for(path);
+    if let Err(e) = (|| -> io::Result<()> {
+        let mut backup = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup_path)?;
+        backup.write_all(&header.to_bytes())?;
+        backup.sync_all()
+    })() {
+        return Outcome::Failed { error: e.into() };
+    }
+
+    let write_res = (|| -> Result<()> {
+        let mut file = OpenOptions::new().write(true).open(path)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(&new_header.to_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = restore_header(path, &backup_path);
+        let _ = fs::remove_file(&backup_path);
+        return Outcome::Failed { error: e };
+    }
+
+    let verify_res = (|| -> Result<()> {
+        let file = File::open(path)?;
+        let mut decryptor = Decryptor::open(file, new_password)?;
+        let mut buf = [0u8; 1];
+        let _ = decryptor.read(&mut buf)?;
+        Ok(())
+    })();
+
+    if let Err(e) = verify_res {
+        let _ = restore_header(path, &backup_path);
+        let _ = fs::remove_file(&backup_path);
+        return Outcome::Failed { error: e };
+    }
+
+    let _ = fs::remove_file(&backup_path);
+    Outcome::PasswordChanged {
+        output: path.to_path_buf(),
+    }
+}
+
+fn restore_header(target: &Path, backup: &Path) -> io::Result<()> {
+    let old_bytes = fs::read(backup)?;
+    let mut file = OpenOptions::new().write(true).open(target)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&old_bytes)?;
+    file.sync_all()
+}
+
+fn migrate_v1_to_v2(
+    path: &Path,
+    old_password: &str,
+    new_password: &str,
+    options: Option<&EncryptOptions>,
+) -> Outcome {
+    let temp = temp_path_for(path);
+    let default_opts = EncryptOptions::default();
+    let opts = options.unwrap_or(&default_opts);
+
+    let stage_res = (|| -> Result<EncryptStats> {
+        let source_file = File::open(path)?;
+        let mut decryptor = Decryptor::open(source_file, old_password)?;
+        let mut dest_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        let stats = encrypt_stream(&mut decryptor, &mut dest_file, new_password, opts)?;
+        dest_file.sync_all()?;
+        Ok(stats)
+    })();
+
+    let stats = match stage_res {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = fs::remove_file(&temp);
+            return Outcome::Failed { error: e };
+        }
+    };
+
+    if let Err(error) = verify(&temp, new_password, stats.plaintext_len) {
+        let _ = fs::remove_file(&temp);
+        return Outcome::Failed { error };
+    }
+
+    let mut original = match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = fs::remove_file(&temp);
+            return Outcome::Failed { error: e.into() };
+        }
+    };
+
+    if let Err(e) = overwrite(&mut original, &temp, stats.ciphertext_len) {
+        return Outcome::Indeterminate {
+            error: e,
+            recovery_copy: Some(temp),
+        };
+    }
+    drop(original);
+
+    match files_identical(path, &temp) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Outcome::Indeterminate {
+                error: Error::Corrupted,
+                recovery_copy: Some(temp),
+            }
+        }
+        Err(e) => {
+            return Outcome::Indeterminate {
+                error: e,
+                recovery_copy: Some(temp),
+            }
+        }
+    }
+
+    let _ = fs::remove_file(&temp);
+    Outcome::PasswordChanged {
+        output: path.to_path_buf(),
+    }
+}
+
+/// Updates the password on every path in `paths`.
+pub fn change_password_batch(
+    paths: &[PathBuf],
+    old_password: &str,
+    new_password: &str,
+    options: Option<&EncryptOptions>,
+    progress: &mut dyn FnMut(usize, usize, &Path),
+) -> Result<BatchReport> {
+    if paths.is_empty() {
+        return Err(Error::InvalidArgument("no files selected"));
+    }
+    validate_password(new_password)?;
+    let total = paths.len();
+    let mut report = BatchReport::default();
+    for (index, path) in paths.iter().enumerate() {
+        progress(index, total, path);
+        let outcome = change_password_one(path, old_password, new_password, options);
         report.files.push(FileReport {
             path: path.clone(),
             outcome,

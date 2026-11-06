@@ -8,12 +8,12 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::constants::{
-    AEAD_ID_XCHACHA20_POLY1305, ARGON2_MIN_MEMORY_PER_LANE_KIB, CHUNK_SIZE_LOG2,
+    AEAD_ID_XCHACHA20_POLY1305, ARGON2_MIN_MEMORY_PER_LANE_KIB, CHUNK_AAD_V2_LEN, CHUNK_SIZE_LOG2,
     CHUNK_SIZE_LOG2_MAX, CHUNK_SIZE_LOG2_MIN, COMPRESSION_DEFLATE, COMPRESSION_NONE,
-    FORMAT_VERSION, HEADER_LEN, KDF_ID_ARGON2ID, KDF_ITERATIONS_DEFAULT, KDF_ITERATIONS_MAX,
-    KDF_ITERATIONS_MIN, KDF_MEMORY_KIB_DEFAULT, KDF_MEMORY_KIB_MAX, KDF_MEMORY_KIB_MIN,
-    KDF_PARALLELISM_DEFAULT, KDF_PARALLELISM_MAX, KDF_PARALLELISM_MIN, KEY_WRAP_AAD_LEN, MAGIC,
-    NONCE_LEN, NONCE_PREFIX_LEN, SALT_LEN, TAG_LEN, WRAPPED_KEY_LEN,
+    FORMAT_VERSION_V1, FORMAT_VERSION_V2, HEADER_LEN, KDF_ID_ARGON2ID, KDF_ITERATIONS_DEFAULT,
+    KDF_ITERATIONS_MAX, KDF_ITERATIONS_MIN, KDF_MEMORY_KIB_DEFAULT, KDF_MEMORY_KIB_MAX,
+    KDF_MEMORY_KIB_MIN, KDF_PARALLELISM_DEFAULT, KDF_PARALLELISM_MAX, KDF_PARALLELISM_MIN,
+    KEY_WRAP_AAD_LEN, MAGIC, NONCE_LEN, NONCE_PREFIX_LEN, SALT_LEN, TAG_LEN, WRAPPED_KEY_LEN,
 };
 use crate::error::{Error, Result};
 
@@ -153,7 +153,7 @@ impl Header {
             pos: MAGIC.len(),
         };
         let version = u16::from_le_bytes(cur.array::<2>());
-        if version != FORMAT_VERSION {
+        if version != FORMAT_VERSION_V1 && version != FORMAT_VERSION_V2 {
             return Err(Error::UnsupportedVersion(version));
         }
         if bytes.len() < HEADER_LEN {
@@ -198,8 +198,16 @@ impl Header {
     }
 
     /// Associated data authenticated by every content chunk: the whole header.
-    pub fn chunk_aad(&self) -> [u8; HEADER_LEN] {
-        self.to_bytes()
+    pub fn chunk_aad(&self) -> Vec<u8> {
+        let serialized = self.to_bytes();
+        if self.version == FORMAT_VERSION_V1 {
+            serialized.to_vec()
+        } else {
+            let mut aad = Vec::with_capacity(CHUNK_AAD_V2_LEN);
+            aad.extend_from_slice(&serialized[..14]);
+            aad.extend_from_slice(&self.nonce_prefix);
+            aad
+        }
     }
 
     /// Plaintext chunk size in bytes.

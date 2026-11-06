@@ -138,6 +138,57 @@ pub fn unwrap_file_key(
     Ok(key)
 }
 
+/// Rewraps a Format v2 file's key under a new password without altering its payload.
+///
+/// Returns an error if the header is Format v1 (v1 chunk AAD includes the key wrap,
+/// so it cannot be rewritten in place without full payload re-encryption).
+pub fn rewrap_header(
+    header: &Header,
+    old_password: &str,
+    new_password: &str,
+    new_params: Option<&KdfParams>,
+) -> Result<Header> {
+    if header.version != crate::constants::FORMAT_VERSION_V2 {
+        return Err(Error::UnsupportedVersion(header.version));
+    }
+    if new_password.is_empty() {
+        return Err(Error::EmptyPassword);
+    }
+    let kdf_params = new_params.unwrap_or(&header.kdf);
+    kdf_params.validate()?;
+
+    let old_kek = derive_kek(old_password, &header.salt, &header.kdf)?;
+    let file_key = unwrap_file_key(
+        &old_kek,
+        &header.wrap_nonce,
+        &header.key_wrap_aad(),
+        &header.wrapped_key,
+    )?;
+
+    let new_salt = random_array::<SALT_LEN>()?;
+    let new_wrap_nonce = random_array::<NONCE_LEN>()?;
+    let new_kek = derive_kek(new_password, &new_salt, kdf_params)?;
+
+    let mut new_header = Header {
+        version: header.version,
+        compression: header.compression,
+        chunk_size_log2: header.chunk_size_log2,
+        kdf: *kdf_params,
+        salt: new_salt,
+        wrap_nonce: new_wrap_nonce,
+        wrapped_key: [0u8; WRAPPED_KEY_LEN],
+        nonce_prefix: header.nonce_prefix,
+    };
+    new_header.wrapped_key = wrap_file_key(
+        &new_kek,
+        &new_wrap_nonce,
+        &new_header.key_wrap_aad(),
+        &file_key,
+    )?;
+
+    Ok(new_header)
+}
+
 /// Builds the nonce of a content chunk: prefix, big-endian index, final flag.
 pub fn chunk_nonce(prefix: &[u8; NONCE_PREFIX_LEN], index: u64, is_last: bool) -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
@@ -195,7 +246,7 @@ fn pump<R: Read, S: Write>(input: &mut R, sink: &mut S) -> io::Result<u64> {
 struct ChunkSealer<'a, W: Write> {
     writer: &'a mut W,
     cipher: XChaCha20Poly1305,
-    aad: [u8; HEADER_LEN],
+    aad: Vec<u8>,
     nonce_prefix: [u8; NONCE_PREFIX_LEN],
     chunk_size: usize,
     buf: Zeroizing<Vec<u8>>,
@@ -335,6 +386,49 @@ pub fn encrypt_stream<R: Read, W: Write>(
     })
 }
 
+/// Encrypts everything readable from `reader` into `writer` using legacy Format v1 (for testing).
+#[cfg(test)]
+pub fn encrypt_stream_v1<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    password: &str,
+    options: &EncryptOptions,
+) -> Result<EncryptStats> {
+    if password.is_empty() {
+        return Err(Error::EmptyPassword);
+    }
+    options.kdf.validate()?;
+    let file_key = Zeroizing::new(random_array::<KEY_LEN>()?);
+    let salt = random_array::<SALT_LEN>()?;
+    let wrap_nonce = random_array::<NONCE_LEN>()?;
+    let nonce_prefix = random_array::<NONCE_PREFIX_LEN>()?;
+
+    let kek = derive_kek(password, &salt, &options.kdf)?;
+    let mut header = Header {
+        version: crate::constants::FORMAT_VERSION_V1,
+        compression: COMPRESSION_NONE,
+        chunk_size_log2: CHUNK_SIZE_LOG2,
+        kdf: options.kdf,
+        salt,
+        wrap_nonce,
+        wrapped_key: [0u8; WRAPPED_KEY_LEN],
+        nonce_prefix,
+    };
+    header.wrapped_key = wrap_file_key(&kek, &wrap_nonce, &header.key_wrap_aad(), &file_key)?;
+    writer.write_all(&header.to_bytes())?;
+
+    let mut sealer = ChunkSealer::new(&mut *writer, cipher_for(&file_key)?, &header);
+    let plaintext_len = pump(reader, &mut sealer)?;
+    let (stored, written) = sealer.finish()?;
+
+    Ok(EncryptStats {
+        plaintext_len,
+        stored_len: stored,
+        compression: header.compression,
+        ciphertext_len: HEADER_LEN as u64 + written,
+    })
+}
+
 fn map_read_error(error: io::Error) -> Error {
     match error.kind() {
         ErrorKind::InvalidData | ErrorKind::InvalidInput | ErrorKind::UnexpectedEof => {
@@ -353,7 +447,7 @@ pub struct Decryptor<R: Read + Seek> {
     reader: R,
     header: Header,
     cipher: XChaCha20Poly1305,
-    aad: [u8; HEADER_LEN],
+    aad: Vec<u8>,
     chunk_size: usize,
     payload_len: u64,
     chunk_count: u64,

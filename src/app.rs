@@ -232,6 +232,21 @@ struct Report {
     lines: Vec<(Severity, String)>,
 }
 
+struct DecryptDialog {
+    files: Vec<PathBuf>,
+    password: Zeroizing<String>,
+    remove_source: bool,
+    reveal: bool,
+}
+
+struct ChangePasswordDialog {
+    files: Vec<PathBuf>,
+    old_password: Zeroizing<String>,
+    new_password: Zeroizing<String>,
+    confirm: Zeroizing<String>,
+    reveal: bool,
+}
+
 struct EncryptDialog {
     files: Vec<PathBuf>,
     password: Zeroizing<String>,
@@ -248,6 +263,8 @@ enum Dialog {
         focus: bool,
     },
     Encrypt(EncryptDialog),
+    Decrypt(DecryptDialog),
+    ChangePassword(ChangePasswordDialog),
     Delete {
         files: Vec<PathBuf>,
         deep: bool,
@@ -271,6 +288,8 @@ enum DialogEvent {
     None,
     Unlock(PathBuf, Zeroizing<String>),
     StartEncrypt(Vec<PathBuf>, Zeroizing<String>),
+    StartDecrypt(Vec<PathBuf>, Zeroizing<String>, bool),
+    StartChangePassword(Vec<PathBuf>, Zeroizing<String>, Zeroizing<String>),
     StartDelete(Vec<PathBuf>, bool),
 }
 
@@ -285,6 +304,8 @@ enum JobMsg {
 
 enum JobOutcome {
     Encrypt(Result<BatchReport>),
+    Decrypt(Result<BatchReport>),
+    ChangePassword(Result<BatchReport>),
     Delete {
         deep: bool,
         results: Vec<(PathBuf, Result<Option<ShredReport>>)>,
@@ -315,6 +336,8 @@ enum Action {
     OpenFavorite(PathBuf),
     RecheckFavorites,
     BeginEncrypt,
+    BeginDecrypt,
+    BeginChangePassword,
     BeginDelete { deep: bool },
     CloseMedia,
     ForgetPassword,
@@ -957,6 +980,47 @@ impl VaultApp {
         }));
     }
 
+    fn begin_decrypt(&mut self) {
+        let mut files = browser::encrypted_selection(&self.selection, &self.entries);
+        if files.is_empty() {
+            if let Some((path, true)) = self.open_file_info() {
+                files.push(path);
+            }
+        }
+        if files.is_empty() {
+            self.say("Tick one or more encrypted files in the list first (or open one).");
+            return;
+        }
+        let password = self.session.passwords.first().unwrap_or("").to_string();
+        self.dialog = Some(Dialog::Decrypt(DecryptDialog {
+            files,
+            password: Zeroizing::new(password),
+            remove_source: false,
+            reveal: false,
+        }));
+    }
+
+    fn begin_change_password(&mut self) {
+        let mut files = browser::encrypted_selection(&self.selection, &self.entries);
+        if files.is_empty() {
+            if let Some((path, true)) = self.open_file_info() {
+                files.push(path);
+            }
+        }
+        if files.is_empty() {
+            self.say("Tick one or more encrypted files in the list first (or open one).");
+            return;
+        }
+        let old_password = self.session.passwords.first().unwrap_or("").to_string();
+        self.dialog = Some(Dialog::ChangePassword(ChangePasswordDialog {
+            files,
+            old_password: Zeroizing::new(old_password),
+            new_password: Zeroizing::new(String::new()),
+            confirm: Zeroizing::new(String::new()),
+            reveal: false,
+        }));
+    }
+
     fn begin_delete(&mut self, deep: bool) {
         let mut files = self.selection.paths();
         if files.is_empty() {
@@ -1007,6 +1071,91 @@ impl VaultApp {
         });
         self.job = Some(Job {
             title: "Encrypting".to_string(),
+            rx,
+            index: 0,
+            total,
+            current: String::new(),
+        });
+    }
+
+    fn spawn_decrypt(
+        &mut self,
+        ctx: &egui::Context,
+        files: Vec<PathBuf>,
+        password: Zeroizing<String>,
+        remove_source: bool,
+    ) {
+        self.close_media();
+        self.session.passwords.remember(&password);
+        let (tx, rx) = mpsc::channel();
+        let repaint = ctx.clone();
+        let total = files.len();
+        std::thread::spawn(move || {
+            let progress_tx = tx.clone();
+            let progress_repaint = repaint.clone();
+            let result = workflow::decrypt_batch(
+                &files,
+                &password,
+                remove_source,
+                &mut |index, total, path| {
+                    let _ = progress_tx.send(JobMsg::Progress {
+                        index,
+                        total,
+                        name: file_label(path),
+                    });
+                    progress_repaint.request_repaint();
+                },
+            );
+            let _ = tx.send(JobMsg::Finished(JobOutcome::Decrypt(result)));
+            repaint.request_repaint();
+        });
+        self.job = Some(Job {
+            title: "Decrypting".to_string(),
+            rx,
+            index: 0,
+            total,
+            current: String::new(),
+        });
+    }
+
+    fn spawn_change_password(
+        &mut self,
+        ctx: &egui::Context,
+        files: Vec<PathBuf>,
+        old_password: Zeroizing<String>,
+        new_password: Zeroizing<String>,
+    ) {
+        self.close_media();
+        self.session.passwords.remember(&new_password);
+        let options = EncryptOptions {
+            kdf: KdfParams::default(),
+            compress: self.compress,
+        };
+        let (tx, rx) = mpsc::channel();
+        let repaint = ctx.clone();
+        let total = files.len();
+        std::thread::spawn(move || {
+            let progress_tx = tx.clone();
+            let progress_repaint = repaint.clone();
+            let result = workflow::change_password_batch(
+                &files,
+                &old_password,
+                &new_password,
+                Some(&options),
+                &mut |index, total, path| {
+                    let _ = progress_tx.send(JobMsg::Progress {
+                        index,
+                        total,
+                        name: file_label(path),
+                    });
+                    progress_repaint.request_repaint();
+                },
+            );
+            let _ = tx.send(JobMsg::Finished(JobOutcome::ChangePassword(result)));
+            repaint.request_repaint();
+        });
+        self.job = Some(Job {
+            title: "Changing password".to_string(),
             rx,
             index: 0,
             total,
@@ -1097,7 +1246,9 @@ impl VaultApp {
                     .iter()
                     .map(|file| {
                         let severity = match file.outcome {
-                            Outcome::Encrypted { .. } => Severity::Good,
+                            Outcome::Encrypted { .. }
+                            | Outcome::Decrypted { .. }
+                            | Outcome::PasswordChanged { .. } => Severity::Good,
                             Outcome::Failed { .. } => Severity::Bad,
                             Outcome::Indeterminate { .. } => Severity::Warning,
                         };
@@ -1123,6 +1274,68 @@ impl VaultApp {
             }
             JobOutcome::Encrypt(Err(error)) => Report {
                 title: "Encryption failed".to_string(),
+                summary: "No file was changed.".to_string(),
+                lines: vec![(Severity::Bad, error.to_string())],
+            },
+            JobOutcome::Decrypt(Ok(batch)) => {
+                let lines = batch
+                    .files
+                    .iter()
+                    .map(|file| {
+                        let severity = match file.outcome {
+                            Outcome::Decrypted { .. } => Severity::Good,
+                            Outcome::Failed { .. } => Severity::Bad,
+                            Outcome::Indeterminate { .. } => Severity::Warning,
+                            _ => Severity::Good,
+                        };
+                        (severity, file.message())
+                    })
+                    .collect();
+                let summary = format!(
+                    "{} decrypted, {} failed, {} uncertain.",
+                    batch.succeeded(),
+                    batch.failed(),
+                    batch.indeterminate()
+                );
+                Report {
+                    title: "Decryption finished".to_string(),
+                    summary,
+                    lines,
+                }
+            }
+            JobOutcome::Decrypt(Err(error)) => Report {
+                title: "Decryption failed".to_string(),
+                summary: "No file was changed.".to_string(),
+                lines: vec![(Severity::Bad, error.to_string())],
+            },
+            JobOutcome::ChangePassword(Ok(batch)) => {
+                let lines = batch
+                    .files
+                    .iter()
+                    .map(|file| {
+                        let severity = match file.outcome {
+                            Outcome::PasswordChanged { .. } => Severity::Good,
+                            Outcome::Failed { .. } => Severity::Bad,
+                            Outcome::Indeterminate { .. } => Severity::Warning,
+                            _ => Severity::Good,
+                        };
+                        (severity, file.message())
+                    })
+                    .collect();
+                let summary = format!(
+                    "{} password changed, {} failed, {} uncertain.",
+                    batch.succeeded(),
+                    batch.failed(),
+                    batch.indeterminate()
+                );
+                Report {
+                    title: "Password update finished".to_string(),
+                    summary,
+                    lines,
+                }
+            }
+            JobOutcome::ChangePassword(Err(error)) => Report {
+                title: "Password update failed".to_string(),
                 summary: "No file was changed.".to_string(),
                 lines: vec![(Severity::Bad, error.to_string())],
             },
@@ -1234,6 +1447,8 @@ impl VaultApp {
             }
             Action::RecheckFavorites => self.refresh_favorite_status(),
             Action::BeginEncrypt => self.begin_encrypt(),
+            Action::BeginDecrypt => self.begin_decrypt(),
+            Action::BeginChangePassword => self.begin_change_password(),
             Action::BeginDelete { deep } => self.begin_delete(deep),
             Action::CloseMedia => {
                 self.close_media();
@@ -1539,6 +1754,22 @@ impl VaultApp {
                     .clicked()
                 {
                     actions.push(Action::BeginEncrypt);
+                }
+                if ui
+                    .button("Decrypt…")
+                    .on_hover_text("Decrypt the ticked encrypted files (or the open file) to disk")
+                    .clicked()
+                {
+                    actions.push(Action::BeginDecrypt);
+                }
+                if ui
+                    .button("Change password…")
+                    .on_hover_text(
+                        "Change the encryption password of the ticked files (or open file)",
+                    )
+                    .clicked()
+                {
+                    actions.push(Action::BeginChangePassword);
                 }
                 if ui
                     .button("Delete…")
@@ -2034,6 +2265,109 @@ impl VaultApp {
                         });
                     });
             }
+            Dialog::Decrypt(d) => {
+                egui::Window::new("Decrypt files")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!("{} file(s) will be decrypted.", d.files.len()));
+                        for path in d.files.iter().take(6) {
+                            ui.label(format!("   {}", file_label(path)));
+                        }
+                        if d.files.len() > 6 {
+                            ui.weak(format!("   … and {} more", d.files.len() - 6));
+                        }
+                        ui.add_space(6.0);
+                        ui.label("Password");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *d.password)
+                                .password(!d.reveal)
+                                .desired_width(300.0),
+                        );
+                        ui.checkbox(&mut d.reveal, "Show password");
+                        ui.checkbox(
+                            &mut d.remove_source,
+                            "Delete encrypted source file after successful decryption",
+                        );
+                        let valid = !d.password.is_empty() && !d.files.is_empty();
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(valid, egui::Button::new("Decrypt"))
+                                .clicked()
+                            {
+                                let files = std::mem::take(&mut d.files);
+                                let secret = std::mem::replace(
+                                    &mut d.password,
+                                    Zeroizing::new(String::new()),
+                                );
+                                event = DialogEvent::StartDecrypt(files, secret, d.remove_source);
+                                keep = false;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                keep = false;
+                            }
+                        });
+                    });
+            }
+            Dialog::ChangePassword(d) => {
+                egui::Window::new("Change password")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!("Change encryption password for {} file(s).", d.files.len()));
+                        ui.weak("Format v2 files update instantly in place. Format v1 files are safely re-encrypted and migrated.");
+                        for path in d.files.iter().take(6) {
+                            ui.label(format!("   {}", file_label(path)));
+                        }
+                        if d.files.len() > 6 {
+                            ui.weak(format!("   … and {} more", d.files.len() - 6));
+                        }
+                        ui.add_space(6.0);
+                        ui.label("Current password");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *d.old_password)
+                                .password(!d.reveal)
+                                .desired_width(300.0),
+                        );
+                        ui.label("New password");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *d.new_password)
+                                .password(!d.reveal)
+                                .desired_width(300.0),
+                        );
+                        ui.label("Repeat new password");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut *d.confirm)
+                                .password(!d.reveal)
+                                .desired_width(300.0),
+                        );
+                        ui.checkbox(&mut d.reveal, "Show passwords");
+                        let policy = workflow::validate_password(&d.new_password).err();
+                        let mismatch = *d.new_password != *d.confirm;
+                        if !d.new_password.is_empty() {
+                            if let Some(problem) = &policy {
+                                ui.colored_label(WARN, problem.to_string());
+                            } else if mismatch {
+                                ui.colored_label(WARN, "The two passwords do not match.");
+                            }
+                        }
+                        let valid = !d.old_password.is_empty() && policy.is_none() && !mismatch && !d.files.is_empty();
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(valid, egui::Button::new("Change password")).clicked() {
+                                let files = std::mem::take(&mut d.files);
+                                let old_secret = std::mem::replace(&mut d.old_password, Zeroizing::new(String::new()));
+                                let new_secret = std::mem::replace(&mut d.new_password, Zeroizing::new(String::new()));
+                                event = DialogEvent::StartChangePassword(files, old_secret, new_secret);
+                                keep = false;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                keep = false;
+                            }
+                        });
+                    });
+            }
             Dialog::Delete {
                 files,
                 deep,
@@ -2118,6 +2452,12 @@ impl VaultApp {
                 self.open_media(ctx, path, Some(password.as_str()))
             }
             DialogEvent::StartEncrypt(files, password) => self.spawn_encrypt(ctx, files, password),
+            DialogEvent::StartDecrypt(files, password, remove_source) => {
+                self.spawn_decrypt(ctx, files, password, remove_source)
+            }
+            DialogEvent::StartChangePassword(files, old_pw, new_pw) => {
+                self.spawn_change_password(ctx, files, old_pw, new_pw)
+            }
             DialogEvent::StartDelete(files, deep) => self.spawn_delete(ctx, files, deep),
         }
     }

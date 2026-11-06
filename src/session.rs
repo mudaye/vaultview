@@ -52,6 +52,11 @@ impl PasswordStore {
         self.items.iter().map(|p| p.as_str()).collect()
     }
 
+    /// The most recently remembered password, if any.
+    pub fn first(&self) -> Option<&str> {
+        self.items.first().map(|p| p.as_str())
+    }
+
     /// Forgets every retained password.
     pub fn forget_all(&mut self) {
         self.items.clear();

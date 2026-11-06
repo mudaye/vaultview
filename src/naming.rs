@@ -4,7 +4,10 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::constants::{DECRYPTED_FALLBACK_EXTENSION, ENCRYPTED_EXTENSION, TEMP_SUFFIX};
+use crate::constants::{
+    DECRYPTED_FALLBACK_EXTENSION, DECRYPT_TEMP_SUFFIX, ENCRYPTED_EXTENSION, TEMP_HEADER_SUFFIX,
+    TEMP_SUFFIX,
+};
 
 /// Where a decrypted file should be written.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +53,24 @@ pub fn temp_path_for(path: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     path.with_file_name(format!(".{name}.{TEMP_SUFFIX}"))
+}
+
+/// Name of the temporary header backup file used while rewrapping `path`.
+pub fn header_backup_path_for(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{name}.{TEMP_HEADER_SUFFIX}"))
+}
+
+/// Name of the hidden staging file used while decrypting to `dest_path`.
+pub fn decrypted_temp_path_for(dest_path: &Path) -> PathBuf {
+    let name = dest_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    dest_path.with_file_name(format!(".{name}.{DECRYPT_TEMP_SUFFIX}"))
 }
 
 /// Returns `path` if unused, otherwise `stem (n).ext` for the first free `n`.

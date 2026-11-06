@@ -15,6 +15,10 @@ pub const APP_NAME: &str = "vaultview";
 pub const ENCRYPTED_EXTENSION: &str = "vvenc";
 /// Suffix of the sibling staging file used during in-place encryption.
 pub const TEMP_SUFFIX: &str = "vvtmp";
+/// Suffix of the temporary header backup used during header-only rewrapping.
+pub const TEMP_HEADER_SUFFIX: &str = "vvhdr.tmp";
+/// Suffix of the sibling staging file used during decryption to disk.
+pub const DECRYPT_TEMP_SUFFIX: &str = "vvdmp";
 /// Extension suggested when the original name of an encrypted file is unknown.
 pub const DECRYPTED_FALLBACK_EXTENSION: &str = "decrypted";
 
@@ -24,8 +28,15 @@ pub const DECRYPTED_FALLBACK_EXTENSION: &str = "decrypted";
 
 /// Magic value identifying an encrypted file.
 pub const MAGIC: [u8; 8] = *b"VVLT\x89\r\n\x1a";
-/// Current encrypted-file format version.
-pub const FORMAT_VERSION: u16 = 1;
+
+/// Initial format version (entire 129-byte header is chunk AAD).
+pub const FORMAT_VERSION_V1: u16 = 1;
+/// Format version 2 (immutable fields are chunk AAD; supports in-place re-wrapping).
+pub const FORMAT_VERSION_V2: u16 = 2;
+/// Current encrypted-file format version written by this release.
+pub const FORMAT_VERSION: u16 = FORMAT_VERSION_V2;
+/// Number of header bytes authenticated by chunk cipher in version 2.
+pub const CHUNK_AAD_V2_LEN: usize = 14 + NONCE_PREFIX_LEN;
 /// Identifier of Argon2id in the header.
 pub const KDF_ID_ARGON2ID: u8 = 1;
 /// Identifier of XChaCha20-Poly1305 in the header.

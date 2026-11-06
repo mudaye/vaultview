@@ -393,3 +393,146 @@ fn report_messages_identify_the_affected_file() {
     };
     assert!(failed.message().contains("gone.png"));
 }
+
+#[test]
+fn decrypt_one_recovers_original_file_and_optional_source_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = pattern(5_000);
+    let src = write_file(dir.path(), "data.bin", &data);
+    let enc = expect_encrypted(encrypt_one(&src, PW, &opts(false)));
+
+    let dest = dir.path().join("recovered.bin");
+    let outcome = decrypt_one(&enc, &dest, PW, false);
+    match outcome {
+        Outcome::Decrypted { output } => {
+            assert_eq!(output, dest);
+            assert_eq!(fs::read(&dest).unwrap(), data);
+            assert!(enc.exists());
+        }
+        other => panic!("expected decrypted, got {other:?}"),
+    }
+
+    let dest2 = dir.path().join("recovered2.bin");
+    let outcome2 = decrypt_one(&enc, &dest2, PW, true);
+    match outcome2 {
+        Outcome::Decrypted { output } => {
+            assert_eq!(output, dest2);
+            assert_eq!(fs::read(&dest2).unwrap(), data);
+            assert!(!enc.exists());
+        }
+        other => panic!("expected decrypted, got {other:?}"),
+    }
+}
+
+#[test]
+fn decrypt_one_wrong_password_cleans_up_staging() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_file(dir.path(), "secret.txt", b"top secret data");
+    let enc = expect_encrypted(encrypt_one(&src, PW, &opts(false)));
+
+    let dest = dir.path().join("secret.txt");
+    let outcome = decrypt_one(&enc, &dest, "wrong-password", false);
+    assert!(matches!(
+        outcome,
+        Outcome::Failed {
+            error: Error::WrongPassword
+        }
+    ));
+    assert!(!dest.exists());
+
+    for entry in fs::read_dir(dir.path()).unwrap() {
+        let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+        assert!(!name.ends_with(DECRYPT_TEMP_SUFFIX));
+    }
+}
+
+#[test]
+fn change_password_v2_header_only_update_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = pattern(20_000);
+    let src = write_file(dir.path(), "vault.dat", &data);
+    let enc = expect_encrypted(encrypt_one(&src, PW, &opts(false)));
+
+    let new_pw = "fresh-replacement-password";
+    let outcome = change_password_one(&enc, PW, new_pw, None);
+    match outcome {
+        Outcome::PasswordChanged { output } => {
+            assert_eq!(output, enc);
+            assert_eq!(decrypt_file(&enc, new_pw), data);
+            let err = std::panic::catch_unwind(|| decrypt_file(&enc, PW));
+            assert!(err.is_err());
+        }
+        other => panic!("expected PasswordChanged, got {other:?}"),
+    }
+
+    let backup = crate::naming::header_backup_path_for(&enc);
+    assert!(!backup.exists());
+}
+
+#[test]
+fn change_password_v1_full_migration_to_v2() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = pattern(8_000);
+
+    let v1_enc = dir.path().join("legacy.vvenc");
+    let mut out_file = fs::File::create(&v1_enc).unwrap();
+    crate::crypto::encrypt_stream_v1(
+        &mut std::io::Cursor::new(&data),
+        &mut out_file,
+        PW,
+        &opts(false),
+    )
+    .unwrap();
+    drop(out_file);
+    /*
+    {
+        use crate::crypto::{derive_kek, generate_file_key, wrap_file_key, ChunkSealer};
+        use crate::format::Header;
+        let kek = derive_kek(PW, &[3u8; SALT_LEN], &KdfParams {
+            memory_kib: KDF_MEMORY_KIB_MIN,
+            iterations: KDF_ITERATIONS_MIN,
+            parallelism: KDF_PARALLELISM_MIN,
+        }).unwrap();
+        let file_key = generate_file_key();
+        let wrap_nonce = [4u8; NONCE_LEN];
+        let mut header = Header {
+            version: FORMAT_VERSION_V1,
+            compression: COMPRESSION_NONE,
+            chunk_size_log2: CHUNK_SIZE_LOG2,
+            kdf: KdfParams {
+                memory_kib: KDF_MEMORY_KIB_MIN,
+                iterations: KDF_ITERATIONS_MIN,
+                parallelism: KDF_PARALLELISM_MIN,
+            },
+            salt: [3u8; SALT_LEN],
+            wrap_nonce,
+            wrapped_key: [0u8; WRAPPED_KEY_LEN],
+            nonce_prefix: [6u8; NONCE_PREFIX_LEN],
+        };
+        header.wrapped_key = wrap_file_key(&file_key, &kek, &wrap_nonce, &header.key_wrap_aad());
+
+        let mut v1_bytes = header.to_bytes().to_vec();
+        let chunk_aad = header.chunk_aad();
+        let mut sealer = ChunkSealer::new(&file_key, &header.nonce_prefix, chunk_aad);
+        let mut chunk = Vec::new();
+        sealer.seal_chunk(0, &data, true, &mut chunk).unwrap();
+        v1_bytes.extend_from_slice(&chunk);
+        fs::write(&v1_enc, v1_bytes).unwrap();
+    }
+
+    */
+    let h1 = read_header(&mut fs::File::open(&v1_enc).unwrap()).unwrap();
+    assert_eq!(h1.version, FORMAT_VERSION_V1);
+
+    let new_pw = "migrated-v2-password";
+    let outcome = change_password_one(&v1_enc, PW, new_pw, Some(&opts(false)));
+    match outcome {
+        Outcome::PasswordChanged { output } => {
+            assert_eq!(output, v1_enc);
+            let h2 = read_header(&mut fs::File::open(&v1_enc).unwrap()).unwrap();
+            assert_eq!(h2.version, FORMAT_VERSION_V2);
+            assert_eq!(decrypt_file(&v1_enc, new_pw), data);
+        }
+        other => panic!("expected PasswordChanged, got {other:?}"),
+    }
+}
