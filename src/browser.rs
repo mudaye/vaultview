@@ -338,5 +338,15 @@ pub fn encryptable_selection(selection: &Selection, entries: &[Entry]) -> Vec<Pa
         .collect()
 }
 
+/// The selected files that are encrypted (for decryption or password update),
+/// in listing order.
+pub fn encrypted_selection(selection: &Selection, entries: &[Entry]) -> Vec<PathBuf> {
+    entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Encrypted && selection.contains(&e.path))
+        .map(|e| e.path.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests;

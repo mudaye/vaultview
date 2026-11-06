@@ -327,10 +327,10 @@ fn magic_and_version_tampering_is_reported_precisely() {
         Err(Error::NotEncrypted)
     ));
     let mut future = ct.clone();
-    future[8] = 2;
+    future[8] = 99;
     assert!(matches!(
         decrypt(&future, PW),
-        Err(Error::UnsupportedVersion(2))
+        Err(Error::UnsupportedVersion(99))
     ));
     let mut bad_kdf_id = ct.clone();
     bad_kdf_id[10] = 9;
@@ -661,6 +661,116 @@ fn read_plaintext_enforces_the_size_limit() {
     ));
 }
 
+#[test]
+/*
+    ));
+}
+
+#[test]
+#[test]
+*/
+fn rewrap_header_updates_password_without_modifying_file_key() {
+    let data = pattern(50_000);
+    let mut ct = encrypt(&data, false);
+    let original_header = Header::from_bytes(&ct).unwrap();
+    assert_eq!(original_header.version, FORMAT_VERSION_V2);
+
+    let new_header = rewrap_header(&original_header, PW, OTHER_PW, None).unwrap();
+    assert_eq!(new_header.version, FORMAT_VERSION_V2);
+    assert_eq!(new_header.nonce_prefix, original_header.nonce_prefix);
+    assert_ne!(new_header.salt, original_header.salt);
+    assert_ne!(new_header.wrap_nonce, original_header.wrap_nonce);
+    assert_ne!(new_header.wrapped_key, original_header.wrapped_key);
+
+    ct[..HEADER_LEN].copy_from_slice(&new_header.to_bytes());
+
+    assert!(matches!(decrypt(&ct, PW), Err(Error::WrongPassword)));
+
+    let decrypted = decrypt(&ct, OTHER_PW).unwrap();
+    assert_eq!(decrypted, data);
+}
+
+#[test]
+fn rewrap_header_rejects_v1_headers() {
+    let ct = encrypt(b"test", false);
+    let mut header = Header::from_bytes(&ct).unwrap();
+    header.version = FORMAT_VERSION_V1;
+    let res = rewrap_header(&header, PW, OTHER_PW, None);
+    assert!(matches!(res, Err(Error::UnsupportedVersion(1))));
+}
+
+#[test]
+fn rewrap_header_rejects_wrong_old_password() {
+    let data = b"some confidential text";
+    let ct = encrypt(data, false);
+    let header = Header::from_bytes(&ct).unwrap();
+    let res = rewrap_header(&header, "wrong-password", OTHER_PW, None);
+    assert!(matches!(res, Err(Error::WrongPassword)));
+}
+
+#[test]
+fn v1_encrypted_file_can_be_opened_and_decrypted_by_v2_code() {
+    let data = b"backward compatibility test with format v1 payload";
+    //
+    let mut v1_stream = Vec::new();
+    encrypt_stream_v1(&mut Cursor::new(data), &mut v1_stream, PW, &opts(false)).unwrap();
+
+    let mut dec = Decryptor::open(Cursor::new(v1_stream.clone()), PW).unwrap();
+    assert_eq!(dec.header().version, FORMAT_VERSION_V1);
+    let plain = dec.read_plaintext(1024).unwrap();
+    assert_eq!(plain.as_slice(), data);
+
+    let mut stream_out = Vec::new();
+    decrypt_stream(Cursor::new(v1_stream), &mut stream_out, PW).unwrap();
+    assert_eq!(stream_out.as_slice(), data);
+    //
+}
+/*
+    let wrap_nonce = [3u8; NONCE_LEN];
+    let mut header = Header {
+        version: FORMAT_VERSION_V1,
+        compression: COMPRESSION_NONE,
+        chunk_size_log2: CHUNK_SIZE_LOG2,
+        kdf: fast_kdf(),
+        salt: [7u8; SALT_LEN],
+        wrap_nonce,
+        wrapped_key: [0u8; WRAPPED_KEY_LEN],
+        nonce_prefix: [5u8; NONCE_PREFIX_LEN],
+    };
+    header.wrapped_key = wrap_file_key(&kek, &wrap_nonce, &header.key_wrap_aad(), &file_key).unwrap();
+
+    let mut v1_stream = Vec::new();
+    v1_stream.extend_from_slice(&header.to_bytes());
+
+    let cipher = cipher_for(&file_key).unwrap();
+    let mut sealer = ChunkSealer::new(&mut v1_stream, cipher, &header);
+    std::io::Write::write_all(&mut sealer, data).unwrap();
+    sealer.finish().unwrap();
+/*
+
+    let header_bytes = header.to_bytes();
+    let mut v1_stream = Vec::new();
+    v1_stream.extend_from_slice(&header_bytes);
+
+    let chunk_aad = header.chunk_aad();
+    assert_eq!(chunk_aad.len(), HEADER_LEN);
+    let mut sealer = ChunkSealer::new(&file_key, &header.nonce_prefix, chunk_aad);
+    let mut chunk_out = Vec::new();
+    sealer.seal_chunk(0, data, true, &mut chunk_out).unwrap();
+*/
+
+    let mut dec = Decryptor::open(Cursor::new(v1_stream.clone()), PW).unwrap();
+    assert_eq!(dec.header().version, FORMAT_VERSION_V1);
+    let plain = dec.read_plaintext(1024).unwrap();
+    assert_eq!(plain.as_slice(), data);
+
+    let mut stream_out = Vec::new();
+    decrypt_stream(Cursor::new(v1_stream), &mut stream_out, PW).unwrap();
+    assert_eq!(stream_out.as_slice(), data);
+}
+
+#[test]
+*/
 #[test]
 fn read_plaintext_reports_corruption() {
     let ct = encrypt(&vec![b'q'; 100_000], true);

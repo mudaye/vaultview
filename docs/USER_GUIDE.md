@@ -205,7 +205,30 @@ Images are decrypted into memory and shown. Videos are decrypted in small pieces
 - A video that was stored compressed inside its encrypted file cannot be streamed; it is decrypted completely into memory first (same 256 MiB limit). Videos encrypted by this version are normally not stored compressed.
 - Passwords are case-sensitive and compared exactly as typed. A different keyboard layout or input method can produce different characters.
 
-**VaultView does not decrypt files back to disk.** It shows encrypted media but never writes a permanent decrypted copy. The encrypted-file format is documented in `docs/FORMAT.md` for anyone who needs to build a separate decryption tool, but a lost password still means lost data.
+## 8a. Decrypting files to disk
+
+You can decrypt encrypted files back to plaintext on disk at any time:
+
+1. Tick one or more encrypted files in the list (or open an encrypted file).
+2. Click **Decrypt…** in the top bar.
+3. Enter the decryption password (remembered session passwords are automatically pre-filled).
+4. Optionally tick **Delete encrypted source file after successful decryption**.
+5. Click **Decrypt**.
+
+**Safe staging:** Decryption writes to a hidden staging file `.<name>.vvdmp`. If decryption fails or is interrupted at any chunk, the staging file is securely wiped (zeroized) and deleted immediately. The destination file is only created once the entire payload has been fully authenticated.
+
+## 8b. Changing passwords (Format v2 & v1 migration)
+
+You can update the encryption password of encrypted files without having to manually decrypt and re-encrypt:
+
+1. Tick one or more encrypted files in the list (or open an encrypted file).
+2. Click **Change password…** in the top bar.
+3. Enter the current password, then type and confirm the new password.
+4. Click **Change password**.
+
+**Format v2 files (fast in-place rewrap):** Format v2 files decouple the key-wrap fields from the payload chunk authentication. Changing the password only unwraps the random file key and re-wraps it with a new key derived from your new password. Content chunks are untouched, making password changes almost instantaneous even for gigabyte-sized files. A temporary backup header `.<name>.vvhdr.tmp` protects against crash corruption.
+
+**Format v1 files (automatic migration):** Older Format v1 files authenticate the whole header inside every chunk. Changing the password automatically decrypts and safely migrates the file to Format v2.
 
 ## 9. Password management
 

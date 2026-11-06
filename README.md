@@ -23,6 +23,8 @@ VaultView lets you browse local folders, view images and play videos, and encryp
 - **Navigation**: Left/Right arrow keys and on-screen buttons move through the images, videos, audio files, PDFs and encrypted files of the current folder in a consistent order. A failed open (for example a wrong password) never advances to another file.
 - **Favorites**: mark folders as favorites; they persist across sessions, store only folder paths, and are flagged when missing, not a folder, or inaccessible.
 - **Encryption**: one password per batch, an independent random key per file, XChaCha20-Poly1305 authenticated encryption in 64 KiB chunks, Argon2id key derivation, optional compression when it clearly helps. Each file is independently decryptable.
+- **In-place password updates**: update passwords of Format v2 files instantly in place without touching content chunks; Format v1 files are safely re-encrypted and migrated to Format v2.
+- **Decryption to disk**: decrypt files back to disk with secure zeroized staging (`.<name>.vvdmp`) to prevent plaintext leakage on failure, with conflict resolution and optional encrypted source deletion.
 - **In-place replacement** with verification and per-file outcomes: *encrypted*, *failed (file untouched)* or *uncertain (recovery copy kept)*.
 - **Encrypted media viewing** without plaintext files: images are decrypted into memory; uncompressed encrypted video is streamed to the player in bounded blocks with random access for seeking.
 - **Privacy controls**: Forget Password, Clear Decrypted Cache, Close Media, and Lock All (all three). The decrypted cache and session passwords are cleared on normal exit.

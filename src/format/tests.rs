@@ -118,7 +118,7 @@ fn truncated_header_with_valid_magic_is_invalid() {
 
 #[test]
 fn unsupported_versions_are_reported_with_their_number() {
-    for version in [0u16, 2, 7, u16::MAX] {
+    for version in [0u16, 3, 7, u16::MAX] {
         let mut bytes = sample_bytes();
         bytes[8..10].copy_from_slice(&version.to_le_bytes());
         match Header::from_bytes(&bytes) {
@@ -126,6 +126,19 @@ fn unsupported_versions_are_reported_with_their_number() {
             other => panic!("version {version}: unexpected result {other:?}"),
         }
     }
+}
+
+#[test]
+fn both_v1_and_v2_headers_are_supported() {
+    let mut v1_bytes = sample_bytes();
+    v1_bytes[8..10].copy_from_slice(&FORMAT_VERSION_V1.to_le_bytes());
+    let h1 = Header::from_bytes(&v1_bytes).unwrap();
+    assert_eq!(h1.version, FORMAT_VERSION_V1);
+
+    let mut v2_bytes = sample_bytes();
+    v2_bytes[8..10].copy_from_slice(&FORMAT_VERSION_V2.to_le_bytes());
+    let h2 = Header::from_bytes(&v2_bytes).unwrap();
+    assert_eq!(h2.version, FORMAT_VERSION_V2);
 }
 
 #[test]
@@ -228,12 +241,34 @@ fn key_wrap_aad_covers_parameters_and_salt_but_not_the_wrapped_key() {
 }
 
 #[test]
-fn chunk_aad_is_the_whole_serialized_header() {
-    let h = sample_header();
+fn chunk_aad_v1_is_the_whole_serialized_header() {
+    let mut h = sample_header();
+    h.version = FORMAT_VERSION_V1;
     assert_eq!(h.chunk_aad(), h.to_bytes());
     let mut other = h.clone();
     other.nonce_prefix[0] ^= 1;
     assert_ne!(other.chunk_aad(), h.chunk_aad());
+}
+
+#[test]
+fn chunk_aad_v2_is_immutable_prefix_and_nonce_prefix() {
+    let h = sample_header();
+    assert_eq!(h.version, FORMAT_VERSION_V2);
+    let aad = h.chunk_aad();
+    assert_eq!(aad.len(), CHUNK_AAD_V2_LEN);
+    assert_eq!(&aad[0..8], &MAGIC);
+    assert_eq!(&aad[8..10], &FORMAT_VERSION_V2.to_le_bytes());
+    assert_eq!(&aad[14..29], &h.nonce_prefix);
+
+    let mut rewrapped = h.clone();
+    rewrapped.salt[0] ^= 0xFF;
+    rewrapped.wrap_nonce[0] ^= 0xFF;
+    rewrapped.wrapped_key[0] ^= 0xFF;
+    assert_eq!(rewrapped.chunk_aad(), aad);
+
+    let mut other = h.clone();
+    other.nonce_prefix[0] ^= 1;
+    assert_ne!(other.chunk_aad(), aad);
 }
 
 #[test]

@@ -33,7 +33,9 @@ fn temp_suffix_is_distinct_from_encrypted_extension() {
 #[test]
 fn magic_and_version_are_stable() {
     assert_eq!(MAGIC, *b"VVLT\x89\r\n\x1a");
-    assert_eq!(FORMAT_VERSION, 1);
+    assert_eq!(FORMAT_VERSION_V1, 1);
+    assert_eq!(FORMAT_VERSION_V2, 2);
+    assert_eq!(FORMAT_VERSION, FORMAT_VERSION_V2);
     assert_eq!(KDF_ID_ARGON2ID, 1);
     assert_eq!(AEAD_ID_XCHACHA20_POLY1305, 1);
     assert_eq!(COMPRESSION_NONE, 0);

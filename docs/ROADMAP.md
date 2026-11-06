@@ -14,55 +14,22 @@ format changes) FORMAT.md with every change.
    the manual checks on both systems), or find what differs in frame timing.
 3. Decide what to do about KI-1 (see item 4).
 
-## 1. Change the password of encrypted files
+## 1. Change the password of encrypted files [COMPLETED]
 
-**Key finding:** in format v1 the associated data of every content chunk is the
-entire 129-byte header, including the salt, wrap nonce and wrapped key. Changing
-the password rewrites exactly those fields, so a header-only rewrite makes every
-chunk fail authentication. With v1 a password change means re-encrypting the whole file.
+**Completed:** Format v2 is implemented as default:
+- Chunk associated data in Format v2 covers immutable fields: `[0..14)` + `nonce_prefix` (29 bytes).
+- A password change rewrites only the key-wrap region of the header (salt, wrap nonce, wrapped key).
+- In-place header rewrites are crash-safe using temporary backup files (`.<name>.vvhdr.tmp`).
+- Seamless backward-compatibility: v2 readers read v1 files. Password change on v1 files migrates them to v2.
+- Unit tests verify in-place header rewrapping, tampering detection, and v1-to-v2 migration.
 
-**Recommended direction: format v2.**
+## 2. Decrypt files to disk [COMPLETED]
 
-- Chunk associated data covers only immutable fields: magic, version, algorithm
-  ids, compression id, chunk exponent and nonce prefix. (The key wrap already
-  authenticates the KDF parameters and salt; the wrapped key is protected by its
-  own tag; the nonce prefix is part of every chunk nonce. Review this reasoning
-  before relying on it.)
-- A password change rewrites only the key-wrap region of the header: salt, wrap
-  nonce, wrapped key and optionally the KDF parameters. The content is untouched.
-- Version 2 readers still read v1. A v1 file is migrated once by re-encryption
-  through the existing staging procedure (`workflow`).
-- The in-place header rewrite must be crash-safe: back up the old header, write
-  the new one, re-verify by unwrapping, then remove the backup. Use fault
-  injection like `workflow::Hooks` in the tests.
-- Tests: tampering with each header field, wrong old password changes nothing,
-  v1 files still decrypt, mixed batches, interrupted rewrite. Update FORMAT.md and the
-  test `chunk_aad_is_the_whole_serialized_header`.
-
-**Security note to document:** rewrapping keeps the same file key. Anyone who knew
-the old password and has an older copy of the file (backup, sync history) can
-still unwrap that file's key. A separate **re-key and re-encrypt** action (new file
-key) is the only way to cut that off for already-copied files.
-
-UI: single file and batch (one new password per batch), old password from the
-session or a prompt, confirm field and lost-password warning, per-file outcomes
-(changed, failed and untouched, uncertain with a recovery copy) like encryption.
-
-## 2. Decrypt files to disk
-
-Originally out of scope (the principle is that no plaintext is intentionally
-written); now wanted as an explicit user action.
-
-- Confirmation dialog stating that a plaintext copy will be written.
-- Destination from `naming::decryption_destination` (exists and is tested but
-  unused): restore the original name, never overwrite, ask when the name cannot
-  be recovered or exists.
-- Decrypt through a hidden staging file and move it into place only after every
-  chunk has authenticated (`decrypt_stream` writes earlier chunks before a later
-  chunk can fail, so staging plaintext must be removed, ideally overwritten, on failure).
-- Ask what happens to the encrypted file afterwards (keep or remove).
-- Batch with per-file outcomes, compressed payloads, session or prompted password.
-- Update the privacy wording in README, USER_GUIDE and the security limitations.
+**Completed:** Explicit user action to decrypt encrypted files back to disk:
+- Destination path resolution with conflict handling (`naming::decryption_destination`).
+- Staging decryption via `.<name>.vvdmp` with automatic zeroization and shredding on failure.
+- Optional removal of encrypted source file after successful decryption.
+- Batch and single-file workflow with per-file status reports.
 
 ## 3. Linux theater mode (KI-1)
 
