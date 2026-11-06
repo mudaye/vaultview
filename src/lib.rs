@@ -12,12 +12,14 @@ pub mod crypto;
 pub mod error;
 pub mod favorites;
 pub mod format;
+pub mod icons;
 pub mod media;
 pub mod naming;
 pub mod pdf;
 pub mod session;
 pub mod shred;
 pub mod theater;
+pub mod theme;
 #[cfg(feature = "video")]
 pub mod video;
 pub mod viewer;
