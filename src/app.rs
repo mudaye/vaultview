@@ -21,6 +21,7 @@ use crate::crypto::{Decryptor, EncryptOptions};
 use crate::error::{Error, Result};
 use crate::favorites::{self, FavoriteStatus, Favorites};
 use crate::format::KdfParams;
+use crate::icons;
 use crate::media::{self, Decoded, ImageData};
 use crate::naming;
 use crate::pdf::{self, PageStep, PdfEvent, PdfWorker};
@@ -30,17 +31,18 @@ use crate::theater::{
     BossSequence, BossStep, HudTimer, LayoutState, LayoutSync, TheaterStrategy, WindowCmd,
     WindowSequencer,
 };
+use crate::theme;
 use crate::viewer::ViewTransform;
 use crate::workflow::{self, BatchReport, Outcome};
 
 #[cfg(feature = "video")]
 use crate::video::{MediaSource, MemorySource, VideoPlayer};
 
-const GOLD: Color32 = Color32::from_rgb(230, 180, 60);
-const FOLDER: Color32 = Color32::from_rgb(210, 190, 110);
-const GOOD: Color32 = Color32::from_rgb(110, 200, 120);
-const WARN: Color32 = Color32::from_rgb(240, 170, 60);
-const BAD: Color32 = Color32::from_rgb(235, 100, 100);
+const GOLD: Color32 = theme::SEMANTIC_GOLD;
+const FOLDER: Color32 = theme::SEMANTIC_FOLDER;
+const GOOD: Color32 = theme::SEMANTIC_GOOD;
+const WARN: Color32 = theme::SEMANTIC_WARN;
+const BAD: Color32 = theme::SEMANTIC_BAD;
 
 /// Starts the application window and runs until it is closed.
 pub fn run() -> eframe::Result<()> {
@@ -59,7 +61,10 @@ pub fn run() -> eframe::Result<()> {
     eframe::run_native(
         c::APP_NAME,
         options,
-        Box::new(move |_cc| Ok(Box::new(VaultApp::new(video_ready)))),
+        Box::new(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            Ok(Box::new(VaultApp::new(video_ready)))
+        }),
     )
 }
 
@@ -483,13 +488,13 @@ fn roots() -> Vec<PathBuf> {
 
 fn kind_style(kind: EntryKind) -> (&'static str, Color32) {
     match kind {
-        EntryKind::Directory => ("📁", FOLDER),
-        EntryKind::Image => ("🖼", Color32::LIGHT_GRAY),
-        EntryKind::Video => ("🎬", Color32::LIGHT_GRAY),
-        EntryKind::Audio => ("🎵", Color32::LIGHT_GRAY),
-        EntryKind::Pdf => ("📕", Color32::LIGHT_GRAY),
-        EntryKind::Encrypted => ("🔒", GOLD),
-        EntryKind::Other => ("📄", Color32::GRAY),
+        EntryKind::Directory => (icons::FOLDER, FOLDER),
+        EntryKind::Image => (icons::IMAGE, theme::TEXT_SECONDARY),
+        EntryKind::Video => (icons::VIDEO, theme::TEXT_SECONDARY),
+        EntryKind::Audio => (icons::AUDIO, theme::TEXT_SECONDARY),
+        EntryKind::Pdf => (icons::PDF, theme::TEXT_SECONDARY),
+        EntryKind::Encrypted => (icons::LOCK, GOLD),
+        EntryKind::Other => (icons::FILE, theme::TEXT_MUTED),
     }
 }
 
@@ -1749,55 +1754,63 @@ impl VaultApp {
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 if ui
-                    .button("Encrypt…")
-                    .on_hover_text("Encrypt the ticked files (or the open file) in place")
+                    .button(icons::LOCK)
+                    .on_hover_text("Encrypt…\nEncrypt the selected files (or open file) in place")
                     .clicked()
                 {
                     actions.push(Action::BeginEncrypt);
                 }
                 if ui
-                    .button("Decrypt…")
-                    .on_hover_text("Decrypt the ticked encrypted files (or the open file) to disk")
+                    .button(icons::UNLOCK)
+                    .on_hover_text("Decrypt…\nDecrypt the selected encrypted files (or open file) to disk")
                     .clicked()
                 {
                     actions.push(Action::BeginDecrypt);
                 }
                 if ui
-                    .button("Change password…")
+                    .button(icons::KEY)
                     .on_hover_text(
-                        "Change the encryption password of the ticked files (or open file)",
+                        "Change password…\nChange the encryption password of the selected files (or open file)",
                     )
                     .clicked()
                 {
                     actions.push(Action::BeginChangePassword);
                 }
                 if ui
-                    .button("Delete…")
-                    .on_hover_text("Delete using the system's standard file deletion")
+                    .button(icons::TRASH)
+                    .on_hover_text("Delete…\nDelete using the system's standard file deletion")
                     .clicked()
                 {
                     actions.push(Action::BeginDelete { deep: false });
                 }
                 if ui
-                    .button(RichText::new("Deep delete…").color(BAD))
-                    .on_hover_text("Overwrite with random data, then delete")
+                    .button(RichText::new(icons::TRASH_2).color(BAD))
+                    .on_hover_text("Deep delete…\nOverwrite with random data, then delete")
                     .clicked()
                 {
                     actions.push(Action::BeginDelete { deep: true });
                 }
                 ui.separator();
-                if ui.button("Close media").clicked() {
+                if ui.button(icons::X).on_hover_text("Close media").clicked() {
                     actions.push(Action::CloseMedia);
                 }
-                if ui.button("Forget password").clicked() {
+                if ui
+                    .button(icons::KEY)
+                    .on_hover_text("Forget password")
+                    .clicked()
+                {
                     actions.push(Action::ForgetPassword);
                 }
-                if ui.button("Clear decrypted cache").clicked() {
+                if ui
+                    .button(icons::DATABASE)
+                    .on_hover_text("Clear decrypted cache")
+                    .clicked()
+                {
                     actions.push(Action::ClearCache);
                 }
                 if ui
-                    .button("Lock all")
-                    .on_hover_text("Close media, forget passwords, clear the cache")
+                    .button(icons::SHIELD)
+                    .on_hover_text("Lock all\nClose media, forget passwords, clear the cache")
                     .clicked()
                 {
                     actions.push(Action::LockAll);
@@ -1805,10 +1818,14 @@ impl VaultApp {
             });
             if matches!(self.content, Content::Image(_) | Content::Pdf(_)) {
                 ui.separator();
-                if ui.button("−").on_hover_text("Zoom out").clicked() {
+                if ui
+                    .button(icons::ZOOM_OUT)
+                    .on_hover_text("Zoom out")
+                    .clicked()
+                {
                     actions.push(Action::ZoomOut);
                 }
-                if ui.button("+").on_hover_text("Zoom in").clicked() {
+                if ui.button(icons::ZOOM_IN).on_hover_text("Zoom in").clicked() {
                     actions.push(Action::ZoomIn);
                 }
                 if ui.button("100%").clicked() {
@@ -1824,33 +1841,41 @@ impl VaultApp {
                 {
                     actions.push(Action::FitImage);
                 }
-                if ui.button("Reset").clicked() {
+                if ui
+                    .button(icons::REFRESH_CW)
+                    .on_hover_text("Reset view")
+                    .clicked()
+                {
                     actions.push(Action::ResetView);
                 }
             }
             ui.separator();
             if ui
-                .button("◀")
+                .button(icons::CHEVRON_LEFT)
                 .on_hover_text("Previous file (Left arrow)")
                 .clicked()
             {
                 actions.push(Action::Prev);
             }
             if ui
-                .button("▶")
+                .button(icons::CHEVRON_RIGHT)
                 .on_hover_text("Next file (Right arrow)")
                 .clicked()
             {
                 actions.push(Action::Next);
             }
             if ui
-                .button("Theater")
-                .on_hover_text("Borderless full screen, viewing pane only (F or F11)")
+                .button(icons::MAXIMIZE)
+                .on_hover_text("Theater\nBorderless full screen, viewing pane only (F or F11)")
                 .clicked()
             {
                 actions.push(Action::ToggleTheater);
             }
-            if ui.button("Help").clicked() {
+            if ui
+                .button(icons::HELP_CIRCLE)
+                .on_hover_text("Help")
+                .clicked()
+            {
                 actions.push(Action::ToggleHelp);
             }
         });
@@ -1876,13 +1901,17 @@ impl VaultApp {
                 }
             }
             if let Some(home) = dirs::home_dir() {
-                if ui.small_button("Home").clicked() {
+                if ui.small_button(format!("{} Home", icons::HOME)).clicked() {
                     actions.push(Action::EnterDir(home));
                 }
             }
         });
         ui.horizontal(|ui| {
-            if ui.button("Up").clicked() {
+            if ui
+                .button(format!("{} Up", icons::ARROW_UP))
+                .on_hover_text("Up (parent directory)")
+                .clicked()
+            {
                 actions.push(Action::GoUp);
             }
             let response = ui
@@ -1895,11 +1924,14 @@ impl VaultApp {
             if ui.checkbox(&mut self.show_hidden, "Hidden").changed() {
                 actions.push(Action::Refresh);
             }
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(format!("{} Refresh", icons::REFRESH_CW))
+                .clicked()
+            {
                 actions.push(Action::Refresh);
             }
             if ui
-                .button("★ Favorite")
+                .button(format!("{} Favorite", icons::STAR))
                 .on_hover_text("Add this folder to favorites")
                 .clicked()
             {
@@ -1907,13 +1939,19 @@ impl VaultApp {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            if ui.small_button("Tick all files").clicked() {
+            if ui
+                .small_button(format!("{} Select all", icons::CHECK))
+                .clicked()
+            {
                 actions.push(Action::SelectAll);
             }
-            if ui.small_button("Untick all").clicked() {
+            if ui
+                .small_button(format!("{} Deselect all", icons::SQUARE))
+                .clicked()
+            {
                 actions.push(Action::ClearSelection);
             }
-            ui.weak(format!("{} ticked", self.selection.len()));
+            ui.weak(format!("{} selected", self.selection.len()));
         });
         if let Some(error) = &self.listing_error {
             ui.colored_label(BAD, error.as_str());
@@ -1965,11 +2003,17 @@ impl VaultApp {
     }
 
     fn ui_favorites(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        if ui.small_button("Re-check").clicked() {
+        if ui
+            .small_button(format!("{} Re-check", icons::REFRESH_CW))
+            .clicked()
+        {
             actions.push(Action::RecheckFavorites);
         }
         if self.favorites.folders().is_empty() {
-            ui.weak("No favorite folders yet. Open a folder under Files and press ★ Favorite.");
+            ui.weak(format!(
+                "No favorite folders yet. Open a folder under Files and press {} Favorite.",
+                icons::STAR
+            ));
             return;
         }
         egui::ScrollArea::vertical()
@@ -1978,7 +2022,7 @@ impl VaultApp {
                 for (folder, status) in &self.fav_status {
                     ui.horizontal(|ui| {
                         let usable = *status == FavoriteStatus::Available;
-                        let name = format!("★ {}", folder.display());
+                        let name = format!("{} {}", icons::STAR, folder.display());
                         if ui.add_enabled(usable, egui::Button::new(name)).clicked() {
                             actions.push(Action::OpenFavorite(folder.clone()));
                         }
@@ -1994,7 +2038,10 @@ impl VaultApp {
                                 ui.colored_label(WARN, "inaccessible");
                             }
                         }
-                        if ui.small_button("Remove").clicked() {
+                        if ui
+                            .small_button(format!("{} Remove", icons::TRASH))
+                            .clicked()
+                        {
                             actions.push(Action::RemoveFavorite(folder.clone()));
                         }
                     });
@@ -2009,7 +2056,7 @@ impl VaultApp {
                 ui.centered_and_justified(|ui| {
                     ui.label(
                         RichText::new("Select an image, video, audio file or PDF in the file browser.\nLeft/Right arrows move between files.")
-                            .color(Color32::GRAY),
+                            .color(theme::TEXT_MUTED),
                     );
                 });
             }
@@ -2058,7 +2105,7 @@ impl VaultApp {
                             "Rendering page…"
                         }
                         .to_string(),
-                        Color32::GRAY,
+                        theme::TEXT_MUTED,
                     ),
                 }
                 pdf_controls(ui, view, actions);
@@ -2083,7 +2130,7 @@ impl VaultApp {
                                 egui::Align2::CENTER_CENTER,
                                 "Loading video…",
                                 egui::FontId::proportional(16.0),
-                                Color32::GRAY,
+                                theme::TEXT_MUTED,
                             );
                         }
                     }
@@ -2589,14 +2636,14 @@ impl VaultApp {
                         }
                         ui.separator();
                         if ui
-                            .button("◀")
+                            .button(icons::CHEVRON_LEFT)
                             .on_hover_text("Previous file (Left arrow)")
                             .clicked()
                         {
                             actions.push(Action::Prev);
                         }
                         if ui
-                            .button("▶")
+                            .button(icons::CHEVRON_RIGHT)
                             .on_hover_text("Next file (Right arrow)")
                             .clicked()
                         {
@@ -2604,10 +2651,14 @@ impl VaultApp {
                         }
                         if zoomable {
                             ui.separator();
-                            if ui.button("−").on_hover_text("Zoom out").clicked() {
+                            if ui
+                                .button(icons::ZOOM_OUT)
+                                .on_hover_text("Zoom out")
+                                .clicked()
+                            {
                                 actions.push(Action::ZoomOut);
                             }
-                            if ui.button("+").on_hover_text("Zoom in").clicked() {
+                            if ui.button(icons::ZOOM_IN).on_hover_text("Zoom in").clicked() {
                                 actions.push(Action::ZoomIn);
                             }
                             if ui.button("100%").clicked() {
@@ -2638,7 +2689,7 @@ impl VaultApp {
             ui.label("PDF: Page Up / Page Down / Home / End: change page");
             ui.label("Video and audio: Space or K: play/pause     J / L: back / forward     Up / Down: volume     M: mute");
             ui.separator();
-            ui.label("Tick files with the check boxes (Shift extends a range), then use Encrypt, Delete or Deep delete.");
+            ui.label("Select files with the check boxes (Shift extends a range), then use Encrypt, Delete or Deep delete.");
             ui.label("Encrypted files show a lock and are decrypted only in memory while viewed.");
             ui.label("Forget password, Clear decrypted cache and Close media are in the top bar; Lock all does all three.");
             ui.colored_label(WARN, "A lost password cannot be recovered. Deep delete cannot guarantee physical erasure.");
@@ -2696,11 +2747,15 @@ fn centered_text(ui: &egui::Ui, rect: egui::Rect, text: String, color: Color32) 
 fn pdf_controls(ui: &mut egui::Ui, view: &PdfView, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         let count = view.page_count().max(1);
-        if ui.button("|◀").on_hover_text("First page (Home)").clicked() {
+        if ui
+            .button(icons::SKIP_BACK)
+            .on_hover_text("First page (Home)")
+            .clicked()
+        {
             actions.push(Action::Pdf(PageStep::First));
         }
         if ui
-            .button("◀")
+            .button(icons::CHEVRON_LEFT)
             .on_hover_text("Previous page (Page Up)")
             .clicked()
         {
@@ -2715,13 +2770,17 @@ fn pdf_controls(ui: &mut egui::Ui, view: &PdfView, actions: &mut Vec<Action>) {
         }
         ui.label(format!("/ {count}"));
         if ui
-            .button("▶")
+            .button(icons::CHEVRON_RIGHT)
             .on_hover_text("Next page (Page Down)")
             .clicked()
         {
             actions.push(Action::Pdf(PageStep::Next));
         }
-        if ui.button("▶|").on_hover_text("Last page (End)").clicked() {
+        if ui
+            .button(icons::SKIP_FORWARD)
+            .on_hover_text("Last page (End)")
+            .clicked()
+        {
             actions.push(Action::Pdf(PageStep::Last));
         }
         if view.loading() {
@@ -2766,19 +2825,22 @@ fn draw_audio_view(ui: &egui::Ui, rect: egui::Rect, view: &VideoView) {
             egui::Rect::from_min_max(egui::pos2(slot.right() + margin, inner.top()), inner.max);
     }
 
-    let mut lines: Vec<(String, f32, Color32)> =
-        vec![(info.title_or(&fallback).to_string(), 26.0, Color32::WHITE)];
+    let mut lines: Vec<(String, f32, Color32)> = vec![(
+        info.title_or(&fallback).to_string(),
+        26.0,
+        theme::TEXT_PRIMARY,
+    )];
     if let Some(artist) = &info.artist {
-        lines.push((artist.clone(), 18.0, Color32::LIGHT_GRAY));
+        lines.push((artist.clone(), 18.0, theme::TEXT_SECONDARY));
     }
     if let Some(album) = &info.album {
-        lines.push((album.clone(), 16.0, Color32::GRAY));
+        lines.push((album.clone(), 16.0, theme::TEXT_MUTED));
     }
     if let Some(genre) = &info.genre {
-        lines.push((genre.clone(), 14.0, Color32::GRAY));
+        lines.push((genre.clone(), 14.0, theme::TEXT_MUTED));
     }
     if let Some(details) = info.details_line() {
-        lines.push((details, 14.0, Color32::GRAY));
+        lines.push((details, 14.0, theme::TEXT_MUTED));
     }
     let wrap = text_area.width().max(50.0);
     let galleys: Vec<_> = lines
@@ -2950,7 +3012,7 @@ impl eframe::App for VaultApp {
                 .show(ctx, |ui| self.ui_left(ui, &mut actions));
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(Color32::from_gray(c::VIEWER_BACKGROUND_GRAY)))
+            .frame(egui::Frame::default().fill(theme::BG_VIEWER))
             .show(ctx, |ui| {
                 if layout != LayoutState::Switching {
                     self.ui_viewer(ui, &mut actions);
