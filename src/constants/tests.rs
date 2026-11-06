@@ -1,7 +1,8 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::assertions_on_constants
+    clippy::assertions_on_constants,
+    clippy::const_is_empty
 )]
 
 use super::*;
@@ -133,4 +134,70 @@ fn extension_lists_are_lowercase_dotless_and_disjoint() {
     }
     assert!(!IMAGE_EXTENSIONS.contains(&ENCRYPTED_EXTENSION));
     assert!(!VIDEO_EXTENSIONS.contains(&ENCRYPTED_EXTENSION));
+}
+
+#[test]
+fn audio_and_pdf_extensions_are_well_formed_and_do_not_overlap_other_kinds() {
+    for ext in AUDIO_EXTENSIONS {
+        assert!(!ext.is_empty());
+        assert!(!ext.starts_with('.'));
+        assert_eq!(*ext, ext.to_ascii_lowercase());
+        assert!(
+            !IMAGE_EXTENSIONS.contains(ext),
+            "{ext} listed as image and audio"
+        );
+        assert!(
+            !VIDEO_EXTENSIONS.contains(ext),
+            "{ext} listed as video and audio"
+        );
+        assert_ne!(*ext, PDF_EXTENSION);
+        assert_ne!(*ext, ENCRYPTED_EXTENSION);
+    }
+    for required in ["mp3", "m4a", "aac", "flac", "ogg", "opus", "wav"] {
+        assert!(
+            AUDIO_EXTENSIONS.contains(&required),
+            "missing audio extension {required}"
+        );
+    }
+    assert_eq!(PDF_EXTENSION, "pdf");
+    assert!(!IMAGE_EXTENSIONS.contains(&PDF_EXTENSION));
+    assert!(!VIDEO_EXTENSIONS.contains(&PDF_EXTENSION));
+}
+
+#[test]
+fn pdf_limits_are_sane() {
+    assert!(MAX_PDF_BYTES > 0);
+    assert!(PDF_MAX_RENDER_PIXELS >= u64::from(MAX_TEXTURE_SIDE));
+    assert!(PDF_RENDER_STEPS_PER_OCTAVE >= 1.0);
+    assert!(PDF_MIN_RENDER_SCALE > 0.0 && PDF_MIN_RENDER_SCALE < 1.0);
+    assert!(PDF_DEFAULT_PAGE_SIZE.0 > 0.0 && PDF_DEFAULT_PAGE_SIZE.1 > 0.0);
+    assert!(PDF_CONTROLS_HEIGHT > 0.0);
+    assert!(PDF_POLL_MS > 0);
+}
+
+#[test]
+fn audio_limits_are_sane() {
+    assert!(AUDIO_TAG_MAX_CHARS >= 64);
+    assert!(AUDIO_COVER_MAX_BYTES > 0);
+    assert!(AUDIO_COVER_MAX_SIDE >= 64 && AUDIO_COVER_MAX_SIDE <= MAX_TEXTURE_SIDE);
+    assert!(AUDIO_VIEW_MARGIN >= 0.0);
+}
+
+#[test]
+fn theater_and_boss_key_constants_are_sane() {
+    assert!(THEATER_HUD_TIMEOUT_SECS > 0.0);
+    assert!(THEATER_HUD_MARGIN >= 0.0);
+    assert!(
+        BOSS_SETTLE_FRAMES >= 1,
+        "at least one frame must pass between locking and minimizing"
+    );
+    assert!(BOSS_LEAVE_THEATER_TIMEOUT_FRAMES > 0);
+    assert!(THEATER_SWITCH_TIMEOUT_FRAMES <= 600);
+    assert!(THEATER_UNMAXIMIZE_TIMEOUT_FRAMES <= 600);
+    assert!(!THEATER_STRATEGY_ENV.is_empty());
+    assert_eq!(
+        THEATER_STRATEGY_ENV,
+        THEATER_STRATEGY_ENV.to_ascii_uppercase()
+    );
+    assert!(!THEATER_STRATEGY_ENV.contains(' '));
 }

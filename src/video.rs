@@ -1,5 +1,6 @@
-//! Video playback through GStreamer (`playbin`), for plain files and for
-//! encrypted files.
+//! Video and audio playback through GStreamer (`playbin`), for plain files and
+//! for encrypted files. Audio-only files use the same pipeline; their tags and
+//! embedded cover art are collected from the pipeline's message bus.
 //!
 //! Encrypted video is never written to disk: a random-access, authenticating
 //! [`MediaSource`] is pulled by an `appsrc` element in bounded blocks, so only
@@ -21,6 +22,7 @@ use gstreamer_video as gst_video;
 use gstreamer_video::VideoFrameExt;
 use zeroize::Zeroizing;
 
+use crate::audio::AudioInfo;
 use crate::constants::{
     VIDEO_APPSRC_BLOCK_LEN, VIDEO_APPSRC_MAX_BYTES, VIDEO_DEFAULT_VOLUME, VIDEO_SINK_MAX_BUFFERS,
     VIDEO_STATE_TIMEOUT_SECS,
@@ -190,6 +192,7 @@ pub struct VideoPlayer {
     volume: f64,
     muted: bool,
     subtitles_on: bool,
+    info: AudioInfo,
 }
 
 impl VideoPlayer {
@@ -265,6 +268,7 @@ impl VideoPlayer {
             volume: VIDEO_DEFAULT_VOLUME,
             muted: false,
             subtitles_on: true,
+            info: AudioInfo::default(),
         };
         player.set_volume(VIDEO_DEFAULT_VOLUME);
         player.play();
@@ -429,7 +433,7 @@ impl VideoPlayer {
         self.subtitles_on = enabled;
     }
 
-    /// Processes pending pipeline messages (errors and end of stream).
+    /// Processes pending pipeline messages (errors, end of stream and tags).
     pub fn poll(&mut self) {
         if let Ok(mut slot) = self.stream_error.lock() {
             if let Some(message) = slot.take() {
@@ -437,10 +441,11 @@ impl VideoPlayer {
                 self.playing = false;
             }
         }
-        while let Some(message) = self
-            .bus
-            .pop_filtered(&[gst::MessageType::Error, gst::MessageType::Eos])
-        {
+        while let Some(message) = self.bus.pop_filtered(&[
+            gst::MessageType::Error,
+            gst::MessageType::Eos,
+            gst::MessageType::Tag,
+        ]) {
             match message.view() {
                 gst::MessageView::Error(err) => {
                     if self.error.is_none() {
@@ -452,6 +457,7 @@ impl VideoPlayer {
                     self.ended = true;
                     self.playing = false;
                 }
+                gst::MessageView::Tag(tag) => merge_tags(&mut self.info, &tag.tags()),
                 _ => {}
             }
         }
@@ -465,6 +471,62 @@ impl VideoPlayer {
         }
         latest.and_then(|sample| sample_to_image(&sample))
     }
+
+    /// Number of video streams. Only meaningful once the duration is known
+    /// (the streams have been analysed); zero means an audio-only file.
+    pub fn video_stream_count(&self) -> i32 {
+        self.playbin.property::<i32>("n-video")
+    }
+
+    /// Descriptive tags collected so far.
+    pub fn info(&self) -> &AudioInfo {
+        &self.info
+    }
+
+    /// Hands out the embedded cover image (encoded bytes) once, if one was found.
+    pub fn take_cover_art(&mut self) -> Option<Vec<u8>> {
+        self.info.take_cover_art()
+    }
+}
+
+/// Copies the descriptive tags of a GStreamer tag list into `info`.
+fn merge_tags(info: &mut AudioInfo, tags: &gst::TagList) {
+    if let Some(value) = tags.get::<gst::tags::Title>() {
+        info.set_title(value.get());
+    }
+    if let Some(value) = tags.get::<gst::tags::Artist>() {
+        info.set_artist(value.get());
+    }
+    if let Some(value) = tags.get::<gst::tags::Album>() {
+        info.set_album(value.get());
+    }
+    if let Some(value) = tags.get::<gst::tags::Genre>() {
+        info.set_genre(value.get());
+    }
+    if let Some(value) = tags.get::<gst::tags::AudioCodec>() {
+        info.set_codec(value.get());
+    }
+    if let Some(value) = tags.get::<gst::tags::Bitrate>() {
+        info.set_bitrate(value.get());
+    } else if let Some(value) = tags.get::<gst::tags::NominalBitrate>() {
+        info.set_bitrate(value.get());
+    }
+    let cover = tags
+        .get::<gst::tags::Image>()
+        .map(|value| value.get())
+        .or_else(|| {
+            tags.get::<gst::tags::PreviewImage>()
+                .map(|value| value.get())
+        });
+    if let Some(bytes) = cover.as_ref().and_then(sample_bytes) {
+        info.set_cover_art(&bytes);
+    }
+}
+
+fn sample_bytes(sample: &gst::Sample) -> Option<Vec<u8>> {
+    let buffer = sample.buffer()?;
+    let map = buffer.map_readable().ok()?;
+    Some(map.as_slice().to_vec())
 }
 
 impl Drop for VideoPlayer {
@@ -480,3 +542,6 @@ impl Drop for VideoPlayer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
